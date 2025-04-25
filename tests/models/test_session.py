@@ -1,92 +1,107 @@
 # tests/test_session.py
-from __future__ import annotations
+import pytest
+import time
+from uuid import UUID
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Generic, TypeVar
-from uuid import uuid4
-from pydantic import BaseModel, Field, model_validator
 
-from a2a_session_manager.models.access_control import AccessControlled
+# session
+from a2a_session_manager.models.session import Session
 from a2a_session_manager.models.session_metadata import SessionMetadata
 from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.session_run import SessionRun, RunStatus
-from a2a_session_manager.storage import SessionStoreProvider
+from a2a_session_manager.storage import InMemorySessionStore, SessionStoreProvider
 
-# Generic type for event message content
-MessageT = TypeVar('MessageT')
+MessageT = str  # simple alias for tests
 
-class Session(AccessControlled, BaseModel, Generic[MessageT]):
-    """A conversation session, with hierarchical structure and access control."""
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    metadata: SessionMetadata = Field(default_factory=SessionMetadata)
-    project_id: Optional[str] = None
+@pytest.fixture(autouse=True)
+def in_memory_store():
+    """Reset and register an in-memory store for each test."""
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    return store
 
-    parent_id: Optional[str] = None
-    child_ids: List[str] = Field(default_factory=list)
 
-    task_ids: List[str] = Field(default_factory=list)
-    runs: List[SessionRun] = Field(default_factory=list)
-    events: List[SessionEvent[MessageT]] = Field(default_factory=list)
-    state: Dict[str, Any] = Field(default_factory=dict)
+def test_default_fields_and_metadata():
+    sess = Session[MessageT]()
+    # id is a valid UUID
+    assert isinstance(sess.id, str)
+    UUID(sess.id)
+    # metadata is default SessionMetadata
+    assert isinstance(sess.metadata, SessionMetadata)
+    # no children, runs, events, or state
+    assert sess.child_ids == []
+    assert sess.runs == []
+    assert sess.events == []
+    assert sess.state == {}
 
-    @model_validator(mode="after")
-    def _sync_hierarchy(cls, model: Session) -> Session:
-        """After model creation, update parent.child_ids if needed."""
-        parent_id = model.parent_id
-        if parent_id:
-            store = SessionStoreProvider.get_store()
-            parent = store.get(parent_id)
-            if parent and model.id not in parent.child_ids:
-                parent.child_ids.append(model.id)
-                store.save(parent)
-        return model
 
-    @property
-    def last_update_time(self) -> datetime:
-        """Return the timestamp of the most recent event, or session creation."""
-        if not self.events:
-            return self.metadata.created_at
-        return max(evt.timestamp for evt in self.events)
+def test_last_update_time_without_events():
+    sess = Session[MessageT]()
+    assert sess.last_update_time == sess.metadata.created_at
 
-    @property
-    def active_run(self) -> Optional[SessionRun]:
-        """Return the currently running SessionRun, if any."""
-        for run in reversed(self.runs):
-            if run.status == RunStatus.RUNNING:
-                return run
-        return None
 
-    def add_child(self, child_id: str) -> None:
-        """Add a child session ID to this session."""
-        if child_id not in self.child_ids:
-            self.child_ids.append(child_id)
+def test_last_update_time_with_events():
+    sess = Session[MessageT]()
+    e1 = SessionEvent(message="m1")
+    time.sleep(0.001)
+    e2 = SessionEvent(message="m2")
+    sess.events = [e1, e2]
+    assert sess.last_update_time == max(e1.timestamp, e2.timestamp)
 
-    def remove_child(self, child_id: str) -> None:
-        """Remove a child session ID from this session."""
-        if child_id in self.child_ids:
-            self.child_ids.remove(child_id)
 
-    def ancestors(self) -> List[Session]:
-        """Get a list of ancestor sessions, nearest first."""
-        result: List[Session] = []
-        current_id = self.parent_id
-        store = SessionStoreProvider.get_store()
-        while current_id:
-            parent = store.get(current_id)
-            if not parent:
-                break
-            result.append(parent)
-            current_id = parent.parent_id
-        return result
+def test_active_run_selection():
+    sess = Session[MessageT]()
+    r1 = SessionRun(status=RunStatus.COMPLETED)
+    r2 = SessionRun(status=RunStatus.RUNNING)
+    r3 = SessionRun(status=RunStatus.COMPLETED)
+    sess.runs = [r1, r2, r3]
+    assert sess.active_run is r2
+    # without running
+    sess.runs = [r1, r3]
+    assert sess.active_run is None
 
-    def descendants(self) -> List[Session]:
-        """Get all descendant sessions in depth-first order."""
-        result: List[Session] = []
-        stack = list(self.child_ids)
-        store = SessionStoreProvider.get_store()
-        while stack:
-            cid = stack.pop()
-            child = store.get(cid)
-            if child:
-                result.append(child)
-                stack.extend(child.child_ids)
-        return result
+
+def test_add_and_remove_child():
+    sess = Session[MessageT]()
+    sess.add_child('c1')
+    assert sess.child_ids == ['c1']
+    # duplicate
+    sess.add_child('c1')
+    assert sess.child_ids == ['c1']
+    sess.remove_child('c1')
+    assert sess.child_ids == []
+
+
+def test_hierarchy_sync_and_ancestors(in_memory_store):
+    # create parent and save
+    parent = Session[MessageT]()
+    in_memory_store.save(parent)
+    # create child with parent_id
+    child = Session[MessageT](__pydantic_initialised__=True, parent_id=parent.id)
+    # model_validator should sync
+    assert child.id in parent.child_ids
+    # ancestors
+    anc = child.ancestors()
+    assert [s.id for s in anc] == [parent.id]
+
+
+def test_descendants(in_memory_store):
+    # build root->child->grand
+    root = Session[MessageT]()
+    child = Session[MessageT]()
+    grand = Session[MessageT]()
+    in_memory_store.save(root)
+    in_memory_store.save(child)
+    in_memory_store.save(grand)
+    root.child_ids = [child.id]
+    child.child_ids = [grand.id]
+    desc = root.descendants()
+    ids = [s.id for s in desc]
+    assert child.id in ids and grand.id in ids
+    # child descendants
+    assert [s.id for s in child.descendants()] == [grand.id]
+
+
+def test_sync_nonexistent_parent_does_not_error():
+    sess = Session[MessageT](parent_id='nope')
+    assert sess.parent_id == 'nope'

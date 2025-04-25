@@ -1,17 +1,23 @@
 # examples/session_example_usage.py
 """
-Demonstration script for creating and managing sessions, events, runs, and hierarchy
-using the a2a_session_manager models and in-memory store.
+Demonstration script for managing Accounts → Projects → Sessions,
+recording events, runs, and traversing session hierarchies
+with the in-memory store.
 """
+
+from uuid import uuid4
 from datetime import datetime
 
-# Import provider and in-memory store
+# --- Storage providers ---
 from a2a_session_manager.storage import InMemorySessionStore, SessionStoreProvider
 
-# Import models and enums
-from a2a_session_manager.models.access_control import AccessControlled
-from a2a_session_manager.models.project import Project
-from a2a_session_manager.models.access_levels import AccessLevel
+# --- Account & Project layer ---
+from a2a_accounts.models.access_control import AccessControlled
+from a2a_accounts.models.project import Project
+from a2a_accounts.models.account import Account
+from a2a_accounts.models.access_levels import AccessLevel
+
+# --- Session layer ---
 from a2a_session_manager.models.session import Session
 from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.event_type import EventType
@@ -19,67 +25,68 @@ from a2a_session_manager.models.event_source import EventSource
 from a2a_session_manager.models.session_run import SessionRun, RunStatus
 
 def main():
-    # Initialize in-memory store and register it
+    # 1) Set up an in-memory session store
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
-    print("Initialized in-memory session store.")
+    print("🗄️  Initialized in-memory session store.")
 
-    # Create a project (public)
-    project = Project(
-        name="Demo Project",
-        account_id="acct_demo",
-        access_level=AccessLevel.PUBLIC
+    # 2) Create an Account
+    acct = Account(name="Demo Corp", owner_user_id="alice")
+    print(f"👤 Created Account: {acct.id} (owner_user_id={acct.owner_user_id})")
+
+    # 3) Create a Project under that Account
+    proj = Project(
+        name="Alpha Project",
+        account_id=acct.id,
+        access_level=AccessLevel.SHARED,
+        shared_with={acct.id, "bob"}
     )
-    print(f"Created project: {project.id} (access_level={project.access_level.value})")
+    acct.add_project(proj)
+    print(f"📁 Created Project: {proj.id} (access_level={proj.access_level.value})")
+    print(f"   → Account {acct.id} now owns projects: {acct.project_ids}")
 
-    # Create a root session
-    root_sess = Session(
-        account_id="acct_demo",
-        project_id=project.id
-    )
-    store.save(root_sess)
-    print(f"Root session created: {root_sess.id}")
+    # 4) Create a root Session under that Project
+    root = Session()
+    store.save(root)
+    proj.add_session(root)
+    print(f"💬 Created root Session: {root.id}")
+    print(f"   → Project {proj.id} now has sessions: {proj.session_ids}")
 
-    # Add events to the root session
-    evt1 = SessionEvent(
-        message="User said hello",
+    # 5) Record a couple of events
+    e1 = SessionEvent(
+        message="Hey, how are you?",
         source=EventSource.USER,
         type=EventType.MESSAGE
     )
-    evt2 = SessionEvent(
-        message="LLM responded",
+    e2 = SessionEvent(
+        message="I'm fine, thanks!",
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    root_sess.events.extend([evt1, evt2])
-    print(f"Root session has {len(root_sess.events)} events; last update at {root_sess.last_update_time}")
+    root.events.extend([e1, e2])
+    print(f"   • Recorded {len(root.events)} events; last at {root.last_update_time}")
 
-    # Start a new run
+    # 6) Start and complete a run
     run = SessionRun()
     run.mark_running()
-    root_sess.runs.append(run)
-    print(f"Started run {run.id} at {run.started_at} (status={run.status.value})")
+    root.runs.append(run)
+    print(f"   • Started run {run.id} at {run.started_at} (status={run.status.value})")
 
-    # Complete the run
     run.mark_completed()
-    print(f"Completed run {run.id} at {run.ended_at} (status={run.status.value})")
+    print(f"   • Completed run {run.id} at {run.ended_at} (status={run.status.value})")
 
-    # Create a child session
-    child = Session(
-        account_id="acct_demo",
-        project_id=project.id,
-        parent_id=root_sess.id
-    )
+    # 7) Fork a child Session
+    child = Session(parent_id=root.id)
     store.save(child)
-    print(f"Child session created: {child.id} (parent={child.parent_id})")
+    # The model_validator will auto-sync root.child_ids
+    print(f"🧒 Created child Session: {child.id}")
+    print(f"   → root.child_ids = {root.child_ids}")
+    print(f"   → child.ancestors = {[s.id for s in child.ancestors()]}")
 
-    # Show hierarchy
-    print("Root children:", root_sess.child_ids)
-    print("Child ancestors:", [s.id for s in child.ancestors()])
-
-    # Access control
-    print("Project is public?", project.is_public)
-    print("Does acct_demo have access to root?", root_sess.has_access("acct_demo"))
+    # 8) Check ACL at the project level
+    print(f"🔒 Is project public? {proj.is_public}")
+    print(f"🔑 Does '{acct.id}' have access? {proj.has_access(acct.id)}")
+    print(f"🔑 Does 'eve' have access? {proj.has_access('eve')}")
 
 if __name__ == "__main__":
     main()

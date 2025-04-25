@@ -1,4 +1,4 @@
-# a2a_session_manager/models/access_levels.py
+# a2a_accounts/models/access_levels.py
 """
 Access levels
 """

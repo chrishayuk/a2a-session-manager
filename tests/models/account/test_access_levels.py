@@ -5,7 +5,7 @@ Unit tests for access levels.
 import pytest
 from enum import Enum
 
-from a2a_session_manager.models.access_levels import AccessLevel
+from a2a_accounts.models.access_levels import AccessLevel
 
 
 def test_access_level_is_enum():
