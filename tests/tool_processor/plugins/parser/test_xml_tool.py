@@ -1,7 +1,7 @@
 # tests/tool_processor/plugins/test_xml_tool.py
 import pytest
 import json
-from chuk_tool_processor.plugins.xml_tool import XmlToolPlugin
+from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 
 @ pytest.fixture

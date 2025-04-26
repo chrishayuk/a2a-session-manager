@@ -1,12 +1,12 @@
 # chuk_tool_processor/execution/tool_executor.py
 from typing import List, Optional
 
-# tool processor
+# Lazy import of in-process strategy to allow monkeypatching
+import chuk_tool_processor.execution.strategies.inprocess_strategy as inprocess_mod
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.execution.inprocess_strategy import InProcessStrategy
-from chuk_tool_processor.tool_registry import ToolRegistryInterface
+from chuk_tool_processor.registry.interface import ToolRegistryInterface
 
 class ToolExecutor:
     """
@@ -25,9 +25,12 @@ class ToolExecutor:
         if strategy is not None:
             self.strategy = strategy
         else:
-            self.strategy = InProcessStrategy(
-                registry=registry,
-                default_timeout=default_timeout
+            # Use module-level InProcessStrategy, so monkeypatching works
+            # Pass positional args to match patched FakeInProcess signature
+            self.strategy = inprocess_mod.InProcessStrategy(
+                registry,
+                default_timeout,
+                **strategy_kwargs
             )
         self.registry = registry
 
