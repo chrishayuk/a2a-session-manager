@@ -38,3 +38,7 @@ class GraphEdge(_FrozenMixin, BaseModel):
 
     def __repr__(self) -> str:  # noqa: D401
         return f"<{self.kind.value}:{self.src[:6]}→{self.dst[:6]}>"
+    
+    def __hash__(self) -> int:
+        # allow GraphEdge instances to be used in sets/maps
+        return hash(self.id)

@@ -57,3 +57,7 @@ class GraphNode(_FrozenMixin, BaseModel):
 
     def __repr__(self) -> str:
         return f"<{self.kind.value}:{self.id[:8]}>"
+    
+    def __hash__(self) -> int:
+        # allow GraphEdge instances to be used in sets/maps
+        return hash(self.id)
