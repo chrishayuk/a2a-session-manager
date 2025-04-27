@@ -9,7 +9,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "chuk-tool-processor>=0.1.2",
     "colorama>=0.4.6",
+    "matplotlib>=3.10.1",
+    "networkx>=3.4.2",
+    "openai>=1.76.0",
     "pydantic>=2.11.3",
 ]
 
