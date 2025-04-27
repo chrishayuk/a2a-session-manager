@@ -1,4 +1,4 @@
-# src/a2a_graph/utils/visualization.py
+# a2a_graph/utils/visualization.py
 """
 Visualization utilities for sessions and graph structures.
 
