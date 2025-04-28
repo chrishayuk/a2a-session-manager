@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 dependencies = [
     "chuk-tool-processor>=0.1.2",
     "colorama>=0.4.6",
+    "geopy>=2.4.1",
+    "httpx>=0.28.1",
     "matplotlib>=3.10.1",
     "networkx>=3.4.2",
     "openai>=1.76.0",

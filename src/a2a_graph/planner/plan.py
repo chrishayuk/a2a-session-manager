@@ -5,23 +5,22 @@ from __future__ import annotations
 a2a_graph.planner.plan
 ======================
 
-Author‑facing DSL for composing a plan **before** it is persisted to a
+Author-facing DSL for composing a plan **before** it is persisted to a
 `GraphStore`.
 
 Components are split up to keep the public API small and the internal
 pieces focused:
 
-* `_step_tree.py` – the in‑memory tree of `_Step` nodes and helpers
+* `_step_tree.py` – the in-memory tree of `_Step` nodes and helpers
 * `_ids.py`       – tiny UUID helper
-* `_persist.py`   – functions that turn a fully‑built plan or a single
-                    late‑added step into graph nodes / edges
+* `_persist.py`   – functions that turn a fully-built plan or a single
+                    late-added step into graph nodes / edges
 
-Only the `Plan` class below is re‑exported by `a2a_graph.planner`.
+Only the `Plan` class below is re-exported by `a2a_graph.planner`.
 """
 
 from typing import Dict, List, Sequence
 
-from a2a_graph.models import PlanNode, PlanStep
 from a2a_graph.store.base import GraphStore
 from a2a_graph.store.memory import InMemoryGraphStore
 
@@ -33,20 +32,9 @@ __all__ = ["Plan"]
 
 
 class Plan:
-    """A mutable hierarchy of plan‑steps.
+    """A mutable hierarchy of plan-steps."""
 
-    Example
-    -------
-    ```python
-    plan = (Plan("Demo")
-              .step("Gather requirements")
-              .step("Draft design").up()
-              .step("Write code", after=["1", "2"]))
-    plan_id = plan.save(graph)
-    ```
-    """
-
-    # --------------------------------------------------------------------- init
+    # ------------------------------------------------------------------ init
     def __init__(self, title: str, *, graph: GraphStore | None = None):
         self.title: str = title
         self.id: str = new_plan_id()
@@ -57,7 +45,7 @@ class Plan:
         self._indexed: bool = False              # lazy numbering
         self._by_index: Dict[str, _Step] = {}    # "1.2" -> _Step
 
-    # ------------------------------------------------------------------- builder
+    # ---------------------------------------------------------------- builder
     def step(self, title: str, *, after: Sequence[str] = ()) -> "Plan":
         """Add a **child** step and descend into it (fluent style)."""
         self._cursor = self._cursor.step(title, after=after)
@@ -65,11 +53,11 @@ class Plan:
         return self
 
     def up(self) -> "Plan":
-        """Move the cursor one level **up** (root‑safe)."""
+        """Move the cursor one level **up** (root-safe)."""
         self._cursor = self._cursor.up()
         return self
 
-    # ----------------------------------------------------------- runtime addition
+    # ------------------------------------------------------ runtime addition
     def add_step(
         self,
         title: str,
@@ -77,17 +65,11 @@ class Plan:
         parent: str | None = None,
         after: Sequence[str] = (),
     ) -> str:
-        """Insert a new step **after** the plan has been saved.
+        """
+        Insert a new step **after** the plan has been saved and persist it
+        immediately.
 
-        Parameters
-        ----------
-        title   – human‑readable description
-        parent  – hierarchical index of the parent (``None`` → root)
-        after   – list of dependency indices like ``["1", "2.1"]``
-
-        Returns
-        -------
-        str – the hierarchical index assigned to the new step.
+        Returns the hierarchical index assigned to the new step (e.g. "1.4").
         """
         if not self._indexed:
             self._number_steps()
@@ -104,8 +86,13 @@ class Plan:
         )
         self._by_index[new_step.index] = new_step
 
-        # persist immediately
-        persist_single_step(self, new_step, parent_step, self._graph)
+        # ── persist the single new step (fixed signature) ────────────
+        persist_single_step(
+            new_step,           # the *_Step* object
+            parent_step,        # its parent
+            self._graph,        # target graph store
+            self.id,            # id of the PlanNode
+        )
         return new_step.index
 
     # ---------------------------------------------------------------- numbering
@@ -116,9 +103,10 @@ class Plan:
 
     # ---------------------------------------------------------------- helpers
     def outline(self) -> str:
-        """Plain‑text outline suitable for humans or LLMs."""
+        """Return a plain-text outline (helpful for humans or LLMs)."""
         if not self._indexed:
             self._number_steps()
+
         lines: List[str] = [f"Plan: {self.title}   (id: {self.id[:8]})"]
         for st in iter_steps(self._root):
             deps = f"  depends on {st.after}" if st.after else ""
@@ -127,16 +115,16 @@ class Plan:
             )
         return "\n".join(lines)
 
-    # ---------------------------------------------------------------- save → graph
+    # ---------------------------------------------------------------- save
     def save(self) -> str:
-        """Persist the **entire** plan to the associated graph store."""
+        """Persist the **entire** plan tree to the associated graph store."""
         if not self._indexed:
             self._number_steps()
 
         persist_full_plan(self, self._by_index, self._graph)
         return self.id
 
-    # expose graph for advanced callers
+    # ---------------------------------------------------------------- misc
     @property
-    def graph(self) -> GraphStore:  # read‑only intent
+    def graph(self) -> GraphStore:  # read-only accessor
         return self._graph
