@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Callable, Optional
 from uuid import uuid4
 
 from a2a_graph.graph.node_manager import GraphNodeManager
-from a2a_graph.plan_executor import PlanExecutor
+from a2a_graph.planner.plan_executor import PlanExecutor
 from a2a_graph.models import (
     NodeKind,
     AssistantMessage,

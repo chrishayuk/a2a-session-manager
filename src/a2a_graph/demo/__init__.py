@@ -1,18 +1,13 @@
 # a2a_graph/demo/__init__.py
 """
-Demo components for showcasing a2a_graph functionality.
+Demo helpers for a2a_graph
 
-This package contains demonstration scripts, sample tools,
-and a simulated LLM for testing the GraphAwareToolProcessor.
+• simulate_llm_call – tiny fake-LLM utility used by the demo scripts
 """
 
-from .tools import TOOL_REGISTRY, weather_tool, calculator_tool, search_tool
+from __future__ import annotations
+
+# keep the simulator (still useful for demos / tests)
 from .llm_simulator import simulate_llm_call
 
-__all__ = [
-    "TOOL_REGISTRY",
-    "weather_tool",
-    "calculator_tool", 
-    "search_tool",
-    "simulate_llm_call"
-]
+__all__: list[str] = ["simulate_llm_call"]

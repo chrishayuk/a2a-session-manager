@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # examples/run_plan_executor.py
-#!/usr/bin/env python
 """
 Registry-driven PlanExecutor demo
 ================================
@@ -10,18 +9,16 @@ Registry-driven PlanExecutor demo
 • Uses the global tool registry – no ad-hoc tool code in the demo
 • Pretty console logging (steps + tool calls)
 """
-
 from __future__ import annotations
 
 import asyncio
 import json
-import inspect
 from typing import Any
 
-# ── ensure the three sample tools self-register ────────────────────
+# register tools
 from sample_tools import WeatherTool, CalculatorTool, SearchTool  # noqa: F401
 
-# ── graph / planner bits ───────────────────────────────────────────
+# a2a_graph imports
 from a2a_graph.store.memory import InMemoryGraphStore
 from a2a_graph.models import GraphNode, NodeKind
 from a2a_graph.models.edges import EdgeKind, GraphEdge, ParentChildEdge
