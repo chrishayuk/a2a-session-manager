@@ -1,96 +1,118 @@
 #!/usr/bin/env python
 # examples/run_plan_executor.py
+#!/usr/bin/env python
 """
-run_plan_executor.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Registry-driven PlanExecutor demo
+================================
 
-A polished demonstration of PlanExecutor with a human-readable log.
-
-Plan hierarchy
---------------
-  1     Make coffee
-        1.1  Grind beans
-  2     Read news  (depends on 1)
-
-Each step owns a ToolCall invoking the dummy async `echo` tool.
+• Builds a three-step plan (“Daily helper”)
+• Executes it with PlanExecutor
+• Uses the global tool registry – no ad-hoc tool code in the demo
+• Pretty console logging (steps + tool calls)
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
-import os
-from typing import Any, Dict, List, Callable, Awaitable
+import inspect
+from typing import Any
 
-from a2a_graph.planner.plan_executor import PlanExecutor
+# ── ensure the three sample tools self-register ────────────────────
+from sample_tools import WeatherTool, CalculatorTool, SearchTool  # noqa: F401
+
+# ── graph / planner bits ───────────────────────────────────────────
 from a2a_graph.store.memory import InMemoryGraphStore
 from a2a_graph.models import GraphNode, NodeKind
 from a2a_graph.models.edges import EdgeKind, GraphEdge, ParentChildEdge
-from a2a_graph.utils.pretty import PlanRunLogger, clr, pretty_print_plan
-from a2a_session_manager.models.event_type import EventType
+from a2a_graph.planner.plan_executor import PlanExecutor
+from a2a_graph.utils.pretty import clr, pretty_print_plan, PlanRunLogger
+from a2a_graph.utils.registry_helpers import execute_tool          # <── central helper
 
-# ───────────────────────────── build tiny graph ──────────────────────────
-print(clr("🟢  BUILD GRAPH", "1;32"))
-graph = InMemoryGraphStore()
+# ───────────────────── build tiny plan graph ───────────────────────
+print(clr("🟢  BUILD GRAPH\n", "1;32"))
 
-plan = GraphNode(kind=NodeKind.PLAN, data={"description": "Morning routine"})
-graph.add_node(plan)
+g     = InMemoryGraphStore()
+plan  = GraphNode(kind=NodeKind.PLAN,
+                  data={"description": "Daily helper"})
+g.add_node(plan)
 
-s1   = GraphNode(kind=NodeKind.PLAN_STEP, data={"description": "Make coffee", "index": "1"})
-s11  = GraphNode(kind=NodeKind.PLAN_STEP, data={"description": "Grind beans", "index": "1.1"})
-s2   = GraphNode(kind=NodeKind.PLAN_STEP, data={"description": "Read news",  "index": "2"})
-for n in (s1, s11, s2): graph.add_node(n)
 
-graph.add_edge(ParentChildEdge(src=plan.id, dst=s1.id))
-graph.add_edge(ParentChildEdge(src=s1.id,   dst=s11.id))
-graph.add_edge(ParentChildEdge(src=plan.id, dst=s2.id))
-graph.add_edge(GraphEdge(kind=EdgeKind.STEP_ORDER, src=s1.id, dst=s2.id))
+def add_step(idx: str, desc: str) -> GraphNode:
+    node = GraphNode(kind=NodeKind.PLAN_STEP,
+                     data={"index": idx, "description": desc})
+    g.add_node(node)
+    g.add_edge(ParentChildEdge(src=plan.id, dst=node.id))
+    return node
 
-# tool-call helper
-def attach(step: GraphNode, msg: str):
-    tc = GraphNode(kind=NodeKind.TOOL_CALL, data={"name": "echo", "args": {"msg": msg}})
-    graph.add_node(tc)
-    graph.add_edge(GraphEdge(kind=EdgeKind.PLAN_LINK, src=step.id, dst=tc.id))
 
-attach(s11, "Grinding…")
-attach(s1,  "Brewing ☕")
-attach(s2,  "Good morning headlines")
+s1 = add_step("1", "Check weather in New York")
+s2 = add_step("2", "Multiply 235.5 × 18.75")
+s3 = add_step("3", "Search climate-adaptation info")
 
-pretty_print_plan(graph, plan)
+
+def link(step: GraphNode, name: str, args: dict) -> None:
+    call = GraphNode(kind=NodeKind.TOOL_CALL,
+                     data={"name": name, "args": args})
+    g.add_node(call)
+    g.add_edge(GraphEdge(kind=EdgeKind.PLAN_LINK, src=step.id, dst=call.id))
+
+
+link(s1, "weather",    {"location": "New York"})
+link(s2, "calculator", {"operation": "multiply", "a": 235.5, "b": 18.75})
+link(s3, "search",     {"query": "climate change adaptation"})
+
+pretty_print_plan(g, plan)
 print()
 
-# ───────────────────────────── stub echo tool ────────────────────────────
-async def echo_tool(args: Dict[str, Any]): return {"echo": args}
-async def real_process(tc, evt_id, aid):
-    return await echo_tool(json.loads(tc["function"]["arguments"] or "{}"))
+# ───────────────────── executor + logger ───────────────────────────
+logger = PlanRunLogger(g, plan.id)
+px     = PlanExecutor(g)
 
-# wrapper logger
-logger = PlanRunLogger(graph, plan.id)
+# ── small semaphore so the demo doesn’t hammer the registry in parallel
+_sema = asyncio.Semaphore(3)
 
-# ──────────────────────────────── execute ────────────────────────────────
-async def main():
+async def guarded_execute_tool(
+    tool_call: dict,
+    _parent_event_id: str | None = None,
+    _assistant_node_id: str | None = None,
+) -> Any:
+    """
+    Thin async wrapper that forwards the *exact* signature PlanExecutor
+    passes (`tc, parent_event_id, assistant_node_id`) to `execute_tool`
+    while ensuring only a handful run concurrently.
+    """
+    async with _sema:
+        return await execute_tool(tool_call, _parent_event_id, _assistant_node_id)
+
+
+async def main() -> None:
     print(clr("🛠  EXECUTE", "1;34"))
-    px = PlanExecutor(graph)
 
-    results: List[Any] = []
+    results: list[dict] = []
     steps   = px.get_plan_steps(plan.id)
     batches = px.determine_execution_order(steps)
 
     for batch in batches:
-        coros = [
+        coroutines = [
             px.execute_step(
-                sid,
+                step_id=sid,
                 assistant_node_id="assistant",
-                parent_event_id="root",
+                parent_event_id="root_evt",
                 create_child_event=logger.evt,
-                process_tool_call=lambda tc, e, a, _sid=sid: logger.proc(tc, e, a, real_proc=real_process),
+                process_tool_call=lambda tc, e, a: logger.proc(
+                    tc, e, a, guarded_execute_tool
+                ),
             )
             for sid in batch
         ]
-        for r in await asyncio.gather(*coros):
-            results.extend(r)
+        for rlist in await asyncio.gather(*coroutines):
+            results.extend(rlist)
 
     print(clr("\n🎉  RESULTS", "1;32"))
     for r in results:
         print(json.dumps(r, indent=2))
+
 
 if __name__ == "__main__":
     asyncio.run(main())
