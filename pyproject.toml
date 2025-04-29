@@ -9,6 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "bs4>=0.0.2",
     "chuk-tool-processor>=0.1.2",
     "colorama>=0.4.6",
     "geopy>=2.4.1",
@@ -17,6 +18,7 @@ dependencies = [
     "networkx>=3.4.2",
     "openai>=1.76.0",
     "pydantic>=2.11.3",
+    "requests>=2.32.3",
 ]
 
 # Tell setuptools to look in src/ for your a2a package

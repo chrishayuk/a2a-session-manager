@@ -2,55 +2,88 @@
 sample_tools/search_tool.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Quick-and-dirty “search” tool.
+Simple web-search tool that scrapes DuckDuckGo’s HTML results page
+(so it still works without an API key).  Returns up to *max_results*
+organic links.
 
-• Synchronous processors call  →  run()
-• Async processors call        →  await arun()
+Install deps once:
+
+    pip install requests beautifulsoup4
+
 """
+
 from __future__ import annotations
-
-import asyncio
-import time
+import time, requests, re
 from typing import Dict, List
-
+from bs4 import BeautifulSoup
 from chuk_tool_processor.registry.decorators import register_tool
 from chuk_tool_processor.models.validated_tool import ValidatedTool
 
 
 @register_tool(name="search")
 class SearchTool(ValidatedTool):
-    """Return dummy search results (demo only)."""
+    """Return the first *n* DuckDuckGo results for a query."""
 
-    # ── validated arguments & result ─────────────────────────────
+    # ── validated arguments & result ─────────────────────────────────
     class Arguments(ValidatedTool.Arguments):
         query: str
-        num_results: int = 3
+        max_results: int = 3
 
     class Result(ValidatedTool.Result):
-        results: List[Dict[str, str]]
+        results: List[Dict]
 
-    # ── core (blocking) implementation ───────────────────────────
-    def _execute(self, query: str, num_results: int) -> Dict:
-        """Pretend we queried a search engine."""
-        time.sleep(0.8)  # simulate network latency
-        return {
-            "results": [
+    # ----------------------------------------------------------------
+    @staticmethod
+    def _search_ddg_html(query: str, max_results: int) -> List[Dict]:
+        url = "https://duckduckgo.com/html/?q=" + requests.utils.quote(query)
+        html = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (a2a-demo/1.0)"},
+            timeout=10,
+        ).text
+
+        soup = BeautifulSoup(html, "html.parser")
+        hits: List[Dict] = []
+
+        for res in soup.select("div.result")[:max_results]:
+            a_title = res.select_one("a.result__a")
+            url_tag = res.select_one("a.result__url")
+            snippet = res.select_one("a.result__snippet")
+
+            if not (a_title and url_tag and snippet):
+                continue
+
+            # duckduckgo rewrites URLs; clean them up a bit
+            href = url_tag["href"]
+            href = re.sub(r"^/l/\\?uddg=", "", href)
+            href = requests.utils.unquote(href)
+
+            hits.append(
                 {
-                    "title": f"Result {i+1} for {query}",
-                    "url": f"https://example.com/result{i+1}",
-                    "snippet": f"This is a search result about {query}.",
+                    "title": a_title.get_text(" ", strip=True),
+                    "url":   "https://" + href.lstrip("/"),
+                    "snippet": snippet.get_text(" ", strip=True),
                 }
-                for i in range(num_results)
-            ]
-        }
+            )
+        return hits or [
+            {
+                "title": "No results",
+                "url": "",
+                "snippet": f"No results found for '{query}'",
+            }
+        ]
 
-    # ── sync entry-point required by ValidatedTool ───────────────
+    # ── synchronous execution (required) ─────────────────────────────
     def run(self, **kwargs) -> Dict:
         args = self.Arguments(**kwargs)
-        result = self._execute(**args.model_dump())
-        return self.Result(**result).model_dump()
+        # tiny sleep so demos don’t hammer DDG
+        time.sleep(0.4)
+        hits = self._search_ddg_html(args.query, args.max_results)
+        return self.Result(results=hits).model_dump()
 
-    # ── async façade so callers can “await” the tool ─────────────
+    # ── optional async wrapper (so callers can await arun) ───────────
     async def arun(self, **kwargs) -> Dict:
-        loop = asyncio.get_running_loop()
+        from asyncio import get_running_loop
+
+        loop = get_running_loop()
         return await loop.run_in_executor(None, lambda: self.run(**kwargs))

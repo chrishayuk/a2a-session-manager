@@ -228,81 +228,80 @@ class GraphAwareToolProcessor:
         session.events.append(evt)
         store.save(session)
         return evt
-
+    
     async def process_plan(
-        self,
-        plan_node_id: str,
-        assistant_node_id: str,
-        llm_call_fn: Callable[[str], Any]
-    ) -> List[ToolResult]:
-        """
-        Execute a PlanNode by:
-         1. Recording a run start event
-         2. Fetching & batching steps via PlanExecutor
-         3. Executing each step through PlanExecutor.execute_step
-         4. Recording completion and summary
-        """
-        store = SessionStoreProvider.get_store()
-        session = store.get(self.session_id)
-        if not session:
-            raise RuntimeError(f"Session {self.session_id} not found")
+            self,
+            plan_node_id: str,
+            assistant_node_id: str,
+            llm_call_fn: Callable[[str], Any],
+            *,
+            on_step: Callable[[str, List[ToolResult]], bool] | None = None,   # NEW
+        ) -> List[ToolResult]:
+            """
+            Execute a PlanNode.
 
-        # start a new SessionRun
-        run = SessionRun()
-        run.mark_running()
-        session.runs.append(run)
-        store.save(session)
+            Parameters
+            ----------
+            on_step
+                Optional callback run *after each PlanStep*:
 
-        # record plan start
-        parent_evt = SessionEvent(
-            message={'plan_id': plan_node_id},
-            type=EventType.SUMMARY,
-            source=EventSource.SYSTEM,
-            metadata={'description': 'Plan execution started'}
-        )
-        session.events.append(parent_evt)
-        store.save(session)
-        parent_id = parent_evt.id
+                    keep_running = on_step(step_id, tool_results)
 
-        # get & batch steps
-        steps = self.plan_executor.get_plan_steps(plan_node_id)
-        if not steps:
-            raise ValueError(f"No steps found for plan {plan_node_id}")
+                • Return ``False`` to abort remaining steps.
+                • Return ``True``/``None`` (or omit the param) to continue.
+            """
+            store   = SessionStoreProvider.get_store()
+            session = store.get(self.session_id)
+            if not session:
+                raise RuntimeError(f"Session {self.session_id} not found")
 
-        batches = self.plan_executor.determine_execution_order(steps)
-        all_results: List[ToolResult] = []
+            run = SessionRun(); run.mark_running()
+            session.runs.append(run); store.save(session)
 
-        # execute batches in parallel
-        for batch in batches:
-            tasks = [
-                self.plan_executor.execute_step(
-                    step_id,
-                    assistant_node_id,
-                    parent_id,
-                    self._create_child_event,
-                    self._process_single_tool_call
-                )
-                for step_id in batch
-            ]
-            for res_list in await asyncio.gather(*tasks):
-                all_results.extend(res_list)
+            parent_evt = SessionEvent(
+                message={'plan_id': plan_node_id},
+                type=EventType.SUMMARY,
+                source=EventSource.SYSTEM,
+                metadata={'description': 'Plan execution started'},
+            )
+            session.events.append(parent_evt); store.save(session)
+            parent_id = parent_evt.id
 
-        # complete run
-        run.mark_completed()
-        store.save(session)
+            steps = self.plan_executor.get_plan_steps(plan_node_id)
+            if not steps:
+                raise ValueError(f"No steps found for plan {plan_node_id}")
 
-        # summary event
-        summary_evt = SessionEvent(
-            message={
-                'plan_id': plan_node_id,
-                'steps_executed': len(steps),
-                'tools_executed': len(all_results)
-            },
-            type=EventType.SUMMARY,
-            source=EventSource.SYSTEM,
-            metadata={'parent_event_id': parent_id}
-        )
-        session.events.append(summary_evt)
-        store.save(session)
+            batches      = self.plan_executor.determine_execution_order(steps)
+            all_results: List[ToolResult] = []
 
-        return all_results
+            # we keep batching, but execute steps sequentially inside the batch
+            for batch in batches:
+                for step_id in batch:
+                    res_list = await self.plan_executor.execute_step(
+                        step_id,
+                        assistant_node_id,
+                        parent_id,
+                        self._create_child_event,
+                        self._process_single_tool_call,
+                    )
+                    all_results.extend(res_list)
+
+                    # ── per-step callback ───────────────────────────────
+                    if on_step and on_step(step_id, res_list) is False:
+                        run.mark_completed(); store.save(session)
+                        return all_results
+                    # ─────────────────────────────────────────────────────
+
+            run.mark_completed(); store.save(session)
+            summary_evt = SessionEvent(
+                message={
+                    'plan_id': plan_node_id,
+                    'steps_executed': len(steps),
+                    'tools_executed': len(all_results),
+                },
+                type=EventType.SUMMARY,
+                source=EventSource.SYSTEM,
+                metadata={'parent_event_id': parent_id},
+            )
+            session.events.append(summary_evt); store.save(session)
+            return all_results
