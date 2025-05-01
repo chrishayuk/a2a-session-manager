@@ -1,251 +1,191 @@
-# tests/storage/providers/test_redis.py
 """
 Tests for the Redis-based session store.
 """
 import pytest
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.event_source import EventSource
 from a2a_session_manager.models.event_type import EventType
 from tests.storage.test_base import create_test_session
 
-# Skip the entire module if redis is not installed
+# Skip if the real redis package is not available
 pytest.importorskip("redis")
 
-# Now import the Redis store
 from a2a_session_manager.storage.providers.redis import RedisSessionStore
 
 
 class TestRedisSessionStore:
     """Tests for the RedisSessionStore class."""
-    
+
+    # --------------------------------------------------------------------- #
+    # Fixtures
+    # --------------------------------------------------------------------- #
     @pytest.fixture
     def mock_redis(self):
-        """Create a mock Redis client for testing."""
+        """
+        A fully-featured MagicMock that behaves like a Redis client.
+        Every Redis verb remains a MagicMock, so assertion helpers
+        such as `assert_called_once`, `reset_mock`, `assert_not_called`
+        keep working.
+        """
         client = MagicMock()
-        
-        # Set up in-memory storage for the mock
         self.stored_data = {}
-        
-        # Mock Redis get/set/delete methods
-        def mock_get(key):
+
+        # --- helpers implementing the fake in-memory “database” -----------
+        def _get(key):
             return self.stored_data.get(key)
-            
-        def mock_set(key, value, ex=None):
+
+        def _set(key, value, ex=None):
             self.stored_data[key] = value
             return True
-            
-        def mock_setex(key, time, value):
+
+        def _setex(key, ttl, value):
             self.stored_data[key] = value
             return True
-            
-        def mock_delete(key):
-            if key in self.stored_data:
-                del self.stored_data[key]
+
+        def _delete(key):
+            self.stored_data.pop(key, None)
             return 1
-            
-        def mock_keys(pattern):
-            # Convert pattern with * wildcard to Python startswith
-            if pattern.endswith('*'):
-                prefix = pattern[:-1]
-                return [k.encode('utf-8') for k in self.stored_data.keys() 
-                        if k.startswith(prefix)]
-            return [k.encode('utf-8') for k in self.stored_data.keys() 
-                    if k == pattern]
-            
-        def mock_expire(key, time):
-            # Just check if key exists
+
+        def _expire(key, ttl):
             return 1 if key in self.stored_data else 0
-        
-        # Assign the mock methods
-        client.get = mock_get
-        client.set = mock_set
-        client.setex = mock_setex
-        client.delete = mock_delete
-        client.keys = mock_keys
-        client.expire = mock_expire
-        
+
+        # --- keep each verb a MagicMock, wire behaviour via side_effect ---
+        client.get = MagicMock(side_effect=_get)
+        client.set = MagicMock(side_effect=_set)
+        client.setex = MagicMock(side_effect=_setex)
+        client.delete = MagicMock(side_effect=_delete)
+        client.expire = MagicMock(side_effect=_expire)
+
+        # Leave `keys` as a plain MagicMock so individual tests can
+        # freely override `return_value` and still use call assertions.
+        client.keys = MagicMock()
+
         return client
-    
+
     @pytest.fixture
     def store(self, mock_redis):
-        """Create a Redis store with the mock Redis client."""
+        """A RedisSessionStore wired to the mocked Redis client."""
         return RedisSessionStore(
             redis_client=mock_redis,
             key_prefix="test:",
-            expiration_seconds=None
+            expiration_seconds=None,
         )
-    
+
+    # --------------------------------------------------------------------- #
+    # Tests
+    # --------------------------------------------------------------------- #
     def test_save_and_get(self, store, mock_redis):
-        """Test saving and retrieving a session."""
-        # Create a session
+        """Saving and retrieving a session works end-to-end."""
         session = create_test_session()
-        
-        # Save the session
         store.save(session)
-        
-        # Redis set should have been called with the key and serialized data
+
         mock_redis.set.assert_called_once()
-        
-        # Retrieve the session
+
         retrieved = store.get(session.id)
-        
-        # Check that we got the expected data back
         assert retrieved is not None
         assert retrieved.id == session.id
-        assert len(retrieved.events) == 2
-        assert retrieved.events[0].message == "Test message 1"
-        assert retrieved.events[1].message == "Test message 2"
-    
+        assert [e.message for e in retrieved.events] == [
+            "Test message 1",
+            "Test message 2",
+        ]
+
     def test_get_nonexistent(self, store, mock_redis):
-        """Test retrieving a non-existent session."""
-        # Mock Redis to return None for get
+        """Requesting a missing session returns None."""
         mock_redis.get.return_value = None
-        
-        # Try to get a session that doesn't exist
-        nonexistent = store.get("does-not-exist")
-        
-        # Should return None
-        assert nonexistent is None
-    
+        assert store.get("does-not-exist") is None
+
     def test_delete(self, store, mock_redis):
-        """Test deleting a session."""
-        # Create and save a session
+        """Deleting removes the session from Redis and the cache."""
         session = create_test_session()
         store.save(session)
-        
-        # Clear the mock calls
+
         mock_redis.delete.reset_mock()
-        
-        # Delete the session
         store.delete(session.id)
-        
-        # Redis delete should have been called
+
         mock_redis.delete.assert_called_once()
-        
-        # Session should no longer be retrievable
-        retrieved = store.get(session.id)
-        assert retrieved is None
-    
+        assert store.get(session.id) is None
+
     def test_list_sessions(self, store, mock_redis):
-        """Test listing sessions."""
-        # Set up mock keys to return
-        keys = [f"test:{i}".encode('utf-8') for i in range(3)]
-        mock_redis.keys.return_value = keys
-        
-        # List all sessions
+        """Listing all sessions (no extra prefix)."""
+        mock_redis.keys.return_value = [f"test:{i}".encode() for i in range(3)]
+
         session_ids = store.list_sessions()
-        
-        # Redis keys should have been called with the pattern
+
         mock_redis.keys.assert_called_once_with("test:*")
-        
-        # Should return the IDs without the prefix
-        assert len(session_ids) == 3
         assert session_ids == ["0", "1", "2"]
-    
+
     def test_list_sessions_with_prefix(self, store, mock_redis):
-        """Test listing sessions with a prefix."""
-        # Set up mock keys to return
-        keys = [f"test:filtered_{i}".encode('utf-8') for i in range(3)]
-        mock_redis.keys.return_value = keys
-        
-        # List sessions with prefix
+        """Listing sessions with an additional filter prefix."""
+        mock_redis.keys.return_value = [
+            f"test:filtered_{i}".encode() for i in range(3)
+        ]
+
         session_ids = store.list_sessions(prefix="filtered_")
-        
-        # Redis keys should have been called with the pattern
+
         mock_redis.keys.assert_called_once_with("test:filtered_*")
-        
-        # Should return the IDs without the prefix
         assert len(session_ids) == 3
         for i in range(3):
             assert f"filtered_{i}" in session_ids
-    
+
     def test_update_session(self, store):
-        """Test updating an existing session."""
-        # Create and save a session
+        """Saving the same ID twice updates the stored record."""
         session = create_test_session()
         store.save(session)
-        
-        # Modify the session
+
         session.events.append(
             SessionEvent(
                 message="Test message 3",
                 source=EventSource.USER,
-                type=EventType.MESSAGE
+                type=EventType.MESSAGE,
             )
         )
-        
-        # Save again
         store.save(session)
-        
-        # Retrieve and check
+
         retrieved = store.get(session.id)
         assert retrieved is not None
         assert len(retrieved.events) == 3
-        assert retrieved.events[2].message == "Test message 3"
-    
-    def test_expiration(self, store, mock_redis):
-        """Test setting expiration on sessions."""
-        # Create a store with expiration
+        assert retrieved.events[-1].message == "Test message 3"
+
+    def test_expiration(self, mock_redis):
+        """When expiration_seconds is set, `setex` is used instead of `set`."""
         expiry_store = RedisSessionStore(
             redis_client=mock_redis,
             key_prefix="test:",
-            expiration_seconds=3600  # 1 hour
+            expiration_seconds=3600,
         )
-        
-        # Create and save a session
         session = create_test_session()
-        
-        # Reset mock
+
         mock_redis.set.reset_mock()
         mock_redis.setex.reset_mock()
-        
-        # Save the session
+
         expiry_store.save(session)
-        
-        # Redis setex should be called instead of set
+
         mock_redis.setex.assert_called_once()
         mock_redis.set.assert_not_called()
-    
+
     def test_set_expiration(self, store, mock_redis):
-        """Test manually setting expiration on a session."""
-        # Create and save a session
+        """Manual expire call is forwarded to Redis."""
         session = create_test_session()
         store.save(session)
-        
-        # Reset mock
+
         mock_redis.expire.reset_mock()
-        
-        # Set expiration
-        store.set_expiration(session.id, 7200)  # 2 hours
-        
-        # Redis expire should be called
+        store.set_expiration(session.id, 7200)
+
         mock_redis.expire.assert_called_once()
-    
+
     def test_auto_save_false(self, mock_redis):
-        """Test store with auto_save=False."""
-        # Create store with auto_save disabled
-        store = RedisSessionStore(mock_redis, auto_save=False)
-        
-        # Create and save a session
+        """When auto_save is False, objects stay cached until flush()."""
+        store = RedisSessionStore(redis_client=mock_redis, auto_save=False)
         session = create_test_session()
         store.save(session)
-        
-        # Redis set should not have been called
+
         mock_redis.set.assert_not_called()
-        
-        # But we should still be able to get it from the store (from cache)
-        retrieved = store.get(session.id)
-        assert retrieved is not None
-        assert retrieved.id == session.id
-        
-        # Reset the mock
+
+        # Retrieve comes from cache
+        assert store.get(session.id).id == session.id
+
         mock_redis.set.reset_mock()
-        
-        # Now flush the store
         store.flush()
-        
-        # Redis set should have been called
         mock_redis.set.assert_called()
