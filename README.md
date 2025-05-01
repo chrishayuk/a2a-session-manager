@@ -16,6 +16,8 @@ A2A Session Manager provides a comprehensive solution for tracking, persisting, 
 - **Event Tracking**: Record all interactions with detailed metadata
 - **Token Usage Monitoring**: Track token consumption and estimate costs
 - **Run Management**: Organize sessions into logical execution runs
+- **Prompt Building**: Generate optimized prompts from session data using multiple strategies
+- **Tool Integration**: Track tool execution with parent-child event relationships
 - **Extensible Design**: Easily extend with custom storage providers or event types
 
 ## Installation
@@ -27,8 +29,14 @@ pip install a2a-session-manager
 # With Redis support
 pip install a2a-session-manager[redis]
 
+# With tool processor integration
+pip install a2a-session-manager[tools]
+
 # With development tools
 pip install a2a-session-manager[dev]
+
+# Full installation with all dependencies
+pip install a2a-session-manager[full]
 ```
 
 ## Quick Start
@@ -171,12 +179,97 @@ session.events.append(
 run.mark_completed()
 ```
 
+## Prompt Builder
+
+Generate optimized prompts from session data for LLM calls using various strategies:
+
+```python
+from a2a_session_manager.prompts import build_prompt_from_session, PromptStrategy
+
+# Get a session
+session = store.get(session_id)
+
+# Build a prompt using different strategies
+minimal_prompt = build_prompt_from_session(session, PromptStrategy.MINIMAL)
+conversation_prompt = build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+tool_focused_prompt = build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
+hierarchical_prompt = build_prompt_from_session(
+    session, 
+    PromptStrategy.HIERARCHICAL,
+    include_parent_context=True
+)
+
+# Token-aware prompt building
+from a2a_session_manager.prompts import truncate_prompt_to_token_limit
+
+# Ensure the prompt fits within token limits
+truncated_prompt = truncate_prompt_to_token_limit(
+    conversation_prompt, 
+    max_tokens=4000,
+    model="gpt-4-turbo"
+)
+```
+
+### Prompt Strategies
+
+- **MINIMAL**: Includes only essential context (first user message, latest assistant response, and tool results)
+- **TASK_FOCUSED**: Emphasizes the original task with minimal context
+- **TOOL_FOCUSED**: Prioritizes tool usage information
+- **CONVERSATION**: Includes more conversation history for a natural flow
+- **HIERARCHICAL**: Leverages parent session context for multi-session conversations
+
+## Session-Aware Tool Processing
+
+Track tool execution within your sessions using the SessionAwareToolProcessor:
+
+```python
+from a2a_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
+from your_tool_package import ToolProcessor  # Your tool execution framework
+
+# Create a session-aware tool processor
+processor = SessionAwareToolProcessor(
+    session_id="your_session_id",
+    max_llm_retries=2,
+    llm_retry_prompt="Please provide a valid tool call."
+)
+
+# Process LLM response with tool calls
+async def llm_call_fn(retry_prompt):
+    # Your LLM call implementation
+    return await call_llm_with_prompt(retry_prompt)
+
+# Process the LLM response
+llm_response = {
+    "tool_calls": [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "arguments": '{"location": "New York"}'
+            }
+        }
+    ]
+}
+
+# Tool results will be automatically added to the session
+results = await processor.process_llm_message(llm_response, llm_call_fn)
+```
+
+The SessionAwareToolProcessor:
+- Wraps tool execution in a session run
+- Records the original LLM response
+- Creates child events for each tool call
+- Handles retries when needed
+- Properly marks success and failure states
+
 ## Examples
 
 See the `examples/` directory for complete usage examples:
 
 - `session_example.py`: Basic session management
 - `token_tracking_example.py`: Token usage monitoring
+- `session_prompt_builder.py`: Building LLM prompts from sessions
+- `session_aware_tool_processor.py`: Integrating tool execution with sessions
 
 ## Contributing
 
