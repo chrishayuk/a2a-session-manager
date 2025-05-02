@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# examples/session_aware_tool_processor.py
 """
 Example demonstrating the SessionAwareToolProcessor.
 

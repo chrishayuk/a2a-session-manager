@@ -18,6 +18,7 @@ A2A Session Manager provides a comprehensive solution for tracking, persisting, 
 - **Run Management**: Organize sessions into logical execution runs
 - **Prompt Building**: Generate optimized prompts from session data using multiple strategies
 - **Tool Integration**: Track tool execution with parent-child event relationships
+- **Infinite Conversations**: Support for infinitely long conversations through automatic segmentation
 - **Extensible Design**: Easily extend with custom storage providers or event types
 
 ## Installation
@@ -218,6 +219,54 @@ truncated_prompt = truncate_prompt_to_token_limit(
 - **CONVERSATION**: Includes more conversation history for a natural flow
 - **HIERARCHICAL**: Leverages parent session context for multi-session conversations
 
+## Infinite Conversations
+
+Support for infinitely long conversations through automatic session segmentation and summarization:
+
+```python
+from a2a_session_manager.infinite_conversation import (
+    InfiniteConversationManager,
+    SummarizationStrategy
+)
+
+# Create an infinite conversation manager
+manager = InfiniteConversationManager(
+    token_threshold=6000,  # Create new segment when threshold is reached
+    summary_model="gpt-3.5-turbo",  # Model to use for summaries
+    summarization_strategy=SummarizationStrategy.TOPIC_BASED  # Summarization approach
+)
+
+# Process a message and get the current session ID
+async def process_user_message(session_id, message):
+    # LLM callback for summaries
+    async def llm_callback(messages, model):
+        # Your implementation to call an LLM API
+        return await call_llm_api(messages, model)
+    
+    # Process the message, possibly creating a new segment
+    current_session_id = await manager.process_message(
+        session_id,
+        message,
+        EventSource.USER,
+        llm_callback
+    )
+    
+    return current_session_id
+
+# Get context for an LLM call that spans multiple segments
+context = manager.build_context_for_llm(session_id)
+
+# Retrieve the full conversation history across all segments
+history = manager.get_full_conversation_history(session_id)
+```
+
+### Summarization Strategies
+
+- **BASIC**: General conversation summary
+- **KEY_POINTS**: Extracts key points and important information
+- **QUERY_FOCUSED**: Emphasizes user questions and interests
+- **TOPIC_BASED**: Organizes the summary by conversation topics
+
 ## Session-Aware Tool Processing
 
 Track tool execution within your sessions using the SessionAwareToolProcessor:
@@ -270,6 +319,7 @@ See the `examples/` directory for complete usage examples:
 - `token_tracking_example.py`: Token usage monitoring
 - `session_prompt_builder.py`: Building LLM prompts from sessions
 - `session_aware_tool_processor.py`: Integrating tool execution with sessions
+- `example_infinite_conversation.py`: Managing infinitely long conversations
 
 ## Contributing
 
