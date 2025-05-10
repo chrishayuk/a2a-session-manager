@@ -1,73 +1,63 @@
 """
 sample_tools/search_tool.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+DuckDuckGo HTML search – *sync `_execute` + async facade*.
 
-DuckDuckGo HTML search tool (chuk_tool_processor ≥ 0.8).
-
-• Queries the *html.duckduckgo.com* endpoint directly.
-• Strips DDG redirect wrappers so callers get plain target URLs.
-• Returns a structured `Result` model.
+Compatible with chuk-tool-processor 0.1.x `ValidatedTool`.
 """
+
 from __future__ import annotations
 
-import asyncio
-import re
-import time
+import asyncio, re
 from html import unescape
 from typing import Dict, List
 from urllib.parse import urlparse, parse_qs, unquote
 
 import httpx
-from chuk_tool_processor.registry.decorators import register_tool
 from chuk_tool_processor.models.validated_tool import ValidatedTool
+from chuk_tool_processor.registry.decorators import register_tool
 
-# ─────────────────────────── helpers ────────────────────────────────
-_DDG_URL = "https://html.duckduckgo.com/html/"
-_HEADERS = {
-    "User-Agent": "a2a_demo_search_tool/1.2 (+https://example.com)"
-}
+
+_DDG_URL   = "https://html.duckduckgo.com/html/"
+_HEADERS   = {"User-Agent": "a2a_demo_search_tool/2.0 (+https://example.com)"}
+_RESULT_RE = re.compile(
+    r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="(?P<url>[^"]+)"[^>]*>'
+    r'(?P<title>.*?)</a>',
+    re.S,
+)
 
 
 def _clean_ddg_link(raw: str) -> str:
-    """If `raw` is a DDG redirect URL, return the direct target; else raw."""
+    """Return direct target for DDG redirect URLs."""
     if not raw.startswith("//duckduckgo.com/l/"):
         return raw
-    qs = parse_qs(urlparse(raw).query)
-    target = qs.get("uddg", [""])[0]
-    return unquote(target) or raw
+    return unquote(parse_qs(urlparse(raw).query).get("uddg", [""])[0])
 
 
-def _search_ddg_html(query: str, max_results: int) -> List[Dict]:
-    """Scrape DuckDuckGo HTML results and return ≤ `max_results` hits."""
-    params = {"q": query}
-    with httpx.Client(
-        timeout=8, headers=_HEADERS, follow_redirects=True
-    ) as client:
-        rsp = client.get(_DDG_URL, params=params)
+def _scrape(query: str, max_results: int) -> List[Dict]:
+    """Blocking HTML scrape – called by synchronous `_execute`."""
+    with httpx.Client(timeout=8, headers=_HEADERS, follow_redirects=True) as http:
+        rsp = http.get(_DDG_URL, params={"q": query})
         rsp.raise_for_status()
 
-    pattern = re.compile(
-        r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="(?P<url>[^"]+)"[^>]*>'
-        r'(?P<title>.*?)</a>',
-        re.S,
-    )
-
-    results = []
-    for m in pattern.finditer(rsp.text):
-        title = unescape(re.sub(r"<[^>]+>", "", m.group("title")))
-        url = _clean_ddg_link(unescape(m.group("url")))
-        results.append({"title": title, "url": url})
-        if len(results) >= max_results:
+    hits: List[Dict] = []
+    for m in _RESULT_RE.finditer(rsp.text):
+        hits.append(
+            {
+                "title": unescape(re.sub(r"<[^>]+>", "", m.group("title"))),
+                "url": _clean_ddg_link(unescape(m.group("url"))),
+            }
+        )
+        if len(hits) >= max_results:
             break
-    return results
+    return hits
 
 
-# ─────────────────────────── tool class ─────────────────────────────
+# ─────────────────────────── tool definition ────────────────────────────
 @register_tool(name="search")
 class SearchTool(ValidatedTool):
-    """DuckDuckGo search tool using the new ValidatedTool contract."""
+    """DuckDuckGo search (sync core, async-friendly)."""
 
-    # schemas ----------------------------------------------------------
     class Arguments(ValidatedTool.Arguments):
         query: str
         max_results: int = 5
@@ -75,16 +65,18 @@ class SearchTool(ValidatedTool):
     class Result(ValidatedTool.Result):
         results: List[Dict]
 
-    # sync entry-point -------------------------------------------------
-    def _execute(self, *, query: str, max_results: int) -> Result:
-        # tiny pause so demos don’t hammer DDG
-        time.sleep(0.4)
-        hits = _search_ddg_html(query, max_results)
+    # -------- REQUIRED sync implementation for ValidatedTool ----------
+    def _execute(self, *, query: str, max_results: int) -> Result:  # noqa: D401
+        hits = _scrape(query, max_results)
         return self.Result(results=hits)
 
-    # optional async variant ------------------------------------------
-    async def _execute(self, *, query: str, max_results: int) -> Result:
+    # `run()` is what the executor calls in a worker thread
+    def run(self, **kwargs) -> Dict:
+        args  = self.Arguments(**kwargs)
+        model = self._execute(**args.model_dump())      # synchronous call
+        return model.model_dump()
+
+    # -------- Optional async facade for direct async usage ------------
+    async def arun(self, **kwargs) -> Dict:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, lambda: self._execute(query=query, max_results=max_results)
-        )
+        return await loop.run_in_executor(None, lambda: self.run(**kwargs))
