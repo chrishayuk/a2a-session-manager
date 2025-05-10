@@ -1,4 +1,4 @@
-# a2a_session_manager/storage/providers/memory.py
+# chuk_session_manager/storage/providers/memory.py
 """
 Async in-memory session storage implementation with improved async semantics.
 """
@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import asyncio
 from datetime import datetime
 
-from a2a_session_manager.storage.base import SessionStoreInterface
+from chuk_session_manager.storage.base import SessionStoreInterface
 
 
 class InMemorySessionStore(SessionStoreInterface):

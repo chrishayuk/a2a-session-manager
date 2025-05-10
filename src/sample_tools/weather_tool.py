@@ -21,7 +21,7 @@ from chuk_tool_processor.registry.decorators import register_tool
 from chuk_tool_processor.models.validated_tool import ValidatedTool
 
 # ─────────────────────────── helpers ────────────────────────────────
-_GEOCODER = Nominatim(user_agent="a2a_demo_weather", timeout=5)
+_GEOCODER = Nominatim(user_agent="chuk_demo_weather", timeout=5)
 
 _OM_CODE_MAP: dict[int, str] = {
     0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",

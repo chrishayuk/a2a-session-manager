@@ -7,10 +7,10 @@ import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
-from a2a_session_manager.session_aware_tool_processor import (
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.session_aware_tool_processor import (
     SessionAwareToolProcessor,
     ToolResult,        # ← import the class we just added
 )

@@ -1,4 +1,4 @@
-# a2a_session_manager/storage/base.py
+# chuk_session_manager/storage/base.py
 """
 Base interfaces and providers for async session storage.
 """
@@ -40,7 +40,7 @@ class SessionStoreProvider:
         """Get the currently configured session store."""
         if cls._store is None:
             # Defer import to avoid circular imports
-            from a2a_session_manager.storage.providers.memory import InMemorySessionStore
+            from chuk_session_manager.storage.providers.memory import InMemorySessionStore
             cls._store = InMemorySessionStore()
         return cls._store
 

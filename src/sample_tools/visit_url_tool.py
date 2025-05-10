@@ -59,7 +59,7 @@ class VisitURL(ValidatedTool):
 
         try:
             with httpx.Client(timeout=15, follow_redirects=True) as http:
-                rsp = http.get(real, headers={"User-Agent": "a2a_visit_url/2.1"})
+                rsp = http.get(real, headers={"User-Agent": "chuk_visit_url/2.1"})
             status = rsp.status_code
             html = rsp.text if status == 200 else ""
         except Exception as exc:          # network/TLS errors
@@ -85,7 +85,7 @@ class VisitURL(ValidatedTool):
 
         try:
             async with httpx.AsyncClient(timeout=15, follow_redirects=True) as http:
-                rsp = await http.get(real, headers={"User-Agent": "a2a_visit_url/2.1"})
+                rsp = await http.get(real, headers={"User-Agent": "chuk_visit_url/2.1"})
             status = rsp.status_code
             html = rsp.text if status == 200 else ""
         except Exception as exc:

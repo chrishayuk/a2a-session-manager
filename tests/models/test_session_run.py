@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import time
 from uuid import UUID
 
-from a2a_session_manager.models.session_run import SessionRun, RunStatus
+from chuk_session_manager.models.session_run import SessionRun, RunStatus
 
 
 def test_default_session_run_fields():

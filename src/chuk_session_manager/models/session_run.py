@@ -1,6 +1,6 @@
-# a2a_session_manager/session_run.py
+# chuk_session_manager/session_run.py
 """
-Session run model for the A2A Session Manager with improved async support.
+Session run model for the chuk session manager with improved async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone

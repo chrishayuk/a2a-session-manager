@@ -1,6 +1,6 @@
 # tests/event_source.py
 import pytest
-from a2a_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_source import EventSource
 
 
 def test_event_source_members():

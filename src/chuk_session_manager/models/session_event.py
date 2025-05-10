@@ -1,6 +1,6 @@
-# a2a_session_manager/models/session_event.py
+# chuk_session_manager/models/session_event.py
 """
-Session event model for the A2A Session Manager with improved async support.
+Session event model for the chuk session manager with improved async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -9,9 +9,9 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, ConfigDict
 
 # session manager
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.token_usage import TokenUsage
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.token_usage import TokenUsage
 
 # Generic type for event message content
 MessageT = TypeVar('MessageT')

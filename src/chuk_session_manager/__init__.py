@@ -1,30 +1,30 @@
 """
-A2A Session Manager package.
+chuk session manager package.
 
-This package provides session management capabilities for A2A applications.
+This package provides session management capabilities.
 """
 # Import core components for easier access
 try:
-    from a2a_session_manager.models.event_source import EventSource
-    from a2a_session_manager.models.event_type import EventType
-    from a2a_session_manager.models.session import Session
-    from a2a_session_manager.models.session_event import SessionEvent
-    from a2a_session_manager.models.session_metadata import SessionMetadata
-    from a2a_session_manager.models.session_run import SessionRun, RunStatus
+    from chuk_session_manager.models.event_source import EventSource
+    from chuk_session_manager.models.event_type import EventType
+    from chuk_session_manager.models.session import Session
+    from chuk_session_manager.models.session_event import SessionEvent
+    from chuk_session_manager.models.session_metadata import SessionMetadata
+    from chuk_session_manager.models.session_run import SessionRun, RunStatus
 except ImportError:
     # During package setup or circular imports, these might not be available
     pass
 
 # Import storage components
 try:
-    from a2a_session_manager.storage.base import SessionStoreInterface, SessionStoreProvider
+    from chuk_session_manager.storage.base import SessionStoreInterface, SessionStoreProvider
 except ImportError:
     # During package setup or circular imports, these might not be available
     pass
 
 # Import exceptions
 try:
-    from a2a_session_manager.exceptions import (
+    from chuk_session_manager.exceptions import (
         SessionManagerError,
         SessionNotFound,
         SessionAlreadyExists,

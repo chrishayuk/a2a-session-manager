@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Async token-usage demo for A2A Session Manager.
+Async token-usage demo for chuk session manager.
 
 • tracks per-event / per-model / per-source tokens & cost
 • falls back to a 4-chars≈1-token heuristic when tiktoken isn’t installed
@@ -15,13 +15,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type   import EventType
-from a2a_session_manager.models.session      import Session, SessionEvent
-from a2a_session_manager.models.token_usage  import (
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type   import EventType
+from chuk_session_manager.models.session      import Session, SessionEvent
+from chuk_session_manager.models.token_usage  import (
     TokenUsage, TIKTOKEN_AVAILABLE
 )
-from a2a_session_manager.storage             import (
+from chuk_session_manager.storage             import (
     SessionStoreProvider, InMemorySessionStore
 )
 

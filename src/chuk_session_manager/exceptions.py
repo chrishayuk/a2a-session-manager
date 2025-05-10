@@ -1,6 +1,6 @@
-# a2a_session_manager/exceptions.py
+# chuk_session_manager/exceptions.py
 """
-Exception classes for the A2A Session Manager.
+Exception classes for the chuk session manager.
 
 This module defines the exception hierarchy used throughout the 
 session manager to provide specific, informative error conditions

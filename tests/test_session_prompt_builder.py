@@ -7,16 +7,16 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.session_prompt_builder import (
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.session_prompt_builder import (
     build_prompt_from_session,
     PromptStrategy,
     truncate_prompt_to_token_limit,
 )
-from a2a_session_manager.models.token_usage import TokenUsage
+from chuk_session_manager.models.token_usage import TokenUsage
 
 
 @pytest.mark.asyncio

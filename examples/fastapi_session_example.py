@@ -20,15 +20,15 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.session import Session, SessionEvent
-from a2a_session_manager.session_prompt_builder import (
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.session import Session, SessionEvent
+from chuk_session_manager.session_prompt_builder import (
     PromptStrategy,
     build_prompt_from_session,
 )
-from a2a_session_manager.storage import SessionStoreProvider
-from a2a_session_manager.storage.providers.memory import InMemorySessionStore
+from chuk_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.storage.providers.memory import InMemorySessionStore
 
 # --------------------------------------------------------------------------- #
 # logging
@@ -94,8 +94,8 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # --------------------------------------------------------------------------- #
 app = FastAPI(
-    title="A2A Session Manager API",
-    description="Demo API for A2A Session Manager with async support",
+    title="chuk session manager API",
+    description="Demo API for chuk session manager with async support",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -143,7 +143,7 @@ class PromptResponse(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "A2A Session Manager API",
+        "message": "chuk session manager API",
         "docs": "/docs",
     }
 
@@ -252,7 +252,7 @@ async def build_prompt(session_id: str, req: PromptRequest):
 
     token_estimate = None
     if prompt:
-        from a2a_session_manager.models.token_usage import TokenUsage
+        from chuk_session_manager.models.token_usage import TokenUsage
 
         est = TokenUsage.count_tokens(json.dumps(prompt))
         token_estimate = await est if asyncio.iscoroutine(est) else est

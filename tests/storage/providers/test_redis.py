@@ -1,5 +1,5 @@
 # tests/storage/providers/test_redis.py
-"""Redis‑backed session store.
+"""Redis-backed session store.
 
 Compatible with **both** synchronous ``redis.Redis`` and asynchronous
 ``redis.asyncio.Redis`` clients.  We inspect the provided client once and then
@@ -15,7 +15,7 @@ import inspect
 import json
 from typing import Dict, List, Optional, Type, TypeVar
 
-from a2a_session_manager.models.session import Session
+from chuk_session_manager.models.session import Session
 
 T = TypeVar("T", bound=Session)
 
@@ -43,7 +43,7 @@ class RedisSessionStore:  # not tying to a specific interface to stay decoupled
         self.session_class = session_class
         self._cache: Dict[str, T] = {}
 
-        # Detect if the supplied client is coroutine‑based.
+        # Detect if the supplied client is coroutine-based.
         self._async = inspect.iscoroutinefunction(getattr(redis_client, "set", None))
 
     # ------------------------------------------------------------------
@@ -132,7 +132,7 @@ class RedisSessionStore:  # not tying to a specific interface to stay decoupled
 
 
 # ---------------------------------------------------------------------------
-# Factory helper – imports *redis.asyncio* lazily (helps unit‑testing)
+# Factory helper – imports *redis.asyncio* lazily (helps unit-testing)
 # ---------------------------------------------------------------------------
 
 async def create_redis_session_store(

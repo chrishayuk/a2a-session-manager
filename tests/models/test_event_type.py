@@ -4,7 +4,7 @@ Tests for the EventType enumeration.
 """
 
 import pytest
-from a2a_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_type import EventType
 
 
 def test_event_type_values():

@@ -18,13 +18,13 @@ import json
 import logging
 from typing import Any, Dict, List
 
-# ── A2A imports ─────────────────────────────────────────────────────
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.session import Session, SessionEvent
-from a2a_session_manager.storage import SessionStoreProvider
-from a2a_session_manager.storage.providers.memory import InMemorySessionStore
-from a2a_session_manager.session_prompt_builder import (
+# ── session imports ─────────────────────────────────────────────────────
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.session import Session, SessionEvent
+from chuk_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.storage.providers.memory import InMemorySessionStore
+from chuk_session_manager.session_prompt_builder import (
     build_prompt_from_session,
     PromptStrategy,
     truncate_prompt_to_token_limit,

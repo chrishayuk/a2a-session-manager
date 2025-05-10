@@ -1,6 +1,6 @@
-# a2a_session_manager/models/token_usage.py
+# chuk_session_manager/models/token_usage.py
 """
-Token usage tracking models for the A2A Session Manager.
+Token usage tracking models for the chuk session manager.
 
 This module provides models for tracking token usage in LLM interactions
 with proper async support.

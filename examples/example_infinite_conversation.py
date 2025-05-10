@@ -18,13 +18,13 @@ from typing import List, Dict, Any, Optional, Callable, Union
 from datetime import datetime, timezone
 
 # Import session manager components
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 # Import the InfiniteConversationManager
-from a2a_session_manager.infinite_conversation import (
+from chuk_session_manager.infinite_conversation import (
     InfiniteConversationManager,
     SummarizationStrategy
 )

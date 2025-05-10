@@ -1,11 +1,11 @@
-# a2a_session_manager/session_aware_tool_processor.py
+# chuk_session_manager/session_aware_tool_processor.py
 #!/usr/bin/env python3
 """Session-aware Tool-processor for chuk_tool_processor 0.1.x.
 
 * Converts OpenAI `tool_calls` → `ToolCall` objects.
 * Executes them with **ToolProcessor().executor.execute**.
 * Adds caching / retry.
-* Logs every call into the A2A session tree, storing the **string-repr**
+* Logs every call into the session tree, storing the **string-repr**
   of the result (this is what the prompt-builder currently expects)."""
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.storage import SessionStoreProvider
 
 logger = logging.getLogger(__name__)
 

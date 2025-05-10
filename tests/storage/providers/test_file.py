@@ -10,10 +10,10 @@ import tempfile
 import asyncio
 from pathlib import Path
 
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
 from tests.storage.test_base import create_test_session
 
 

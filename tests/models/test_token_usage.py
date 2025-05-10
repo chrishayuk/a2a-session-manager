@@ -3,7 +3,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
-from a2a_session_manager.models.token_usage import TokenUsage, TokenSummary
+from chuk_session_manager.models.token_usage import TokenUsage, TokenSummary
 
 
 def test_default_token_usage_initialization():

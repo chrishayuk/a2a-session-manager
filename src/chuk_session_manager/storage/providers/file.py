@@ -1,4 +1,4 @@
-# a2a_session_manager/storage/providers/file.py
+# chuk_session_manager/storage/providers/file.py
 
 """
 Async file-based session storage implementation with improved async semantics.
@@ -20,9 +20,9 @@ except ImportError:
     logging.warning("aiofiles package not installed; falling back to synchronous I/O in thread pool.")
 
 # session manager imports
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.storage.base import SessionStoreInterface
-from a2a_session_manager.exceptions import SessionManagerError
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.storage.base import SessionStoreInterface
+from chuk_session_manager.exceptions import SessionManagerError
 
 # Type variable for serializable models
 T = TypeVar('T', bound='Session')

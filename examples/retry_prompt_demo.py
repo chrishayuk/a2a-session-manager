@@ -22,14 +22,14 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
 # ── sample tool (self-registers) ────────────────────────────────────────────
 from sample_tools import WeatherTool  # noqa: F401
 
-# ── A2A imports ─────────────────────────────────────────────────────────────
-from a2a_session_manager.storage.providers.memory import InMemorySessionStore
-from a2a_session_manager.storage import SessionStoreProvider
-from a2a_session_manager.models.session import Session, SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
-from a2a_session_manager.session_prompt_builder import build_prompt_from_session
+# ── session imports ─────────────────────────────────────────────────────────────
+from chuk_session_manager.storage.providers.memory import InMemorySessionStore
+from chuk_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.models.session import Session, SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
+from chuk_session_manager.session_prompt_builder import build_prompt_from_session
 
 ##############################################################################
 # Fake LLM: fails once, succeeds on the second call

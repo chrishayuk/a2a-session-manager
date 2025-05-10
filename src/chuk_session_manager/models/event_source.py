@@ -1,4 +1,4 @@
-# a2a_session_manager/models/event_source.py
+# chuk_session_manager/models/event_source.py
 from enum import Enum
 
 class EventSource(str, Enum):

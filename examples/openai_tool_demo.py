@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # examples/openai_tool_demo.py
-#!/usr/bin/env python3
 """
-Async‑native OpenAI tools demo using the A2A Session Manager.
+Async-native OpenAI tools demo using the chuk session manager.
 
 Highlights
 ----------
-* Fully asynchronous from top to bottom – no blocking calls.
-* Uses **AsyncOpenAI** client and the A2A **SessionAwareToolProcessor** to
-  capture and persist tool‑call hierarchies inside an in‑memory session store.
-* Pretty‑prints the resulting event tree and basic token/cost stats.
+* Fully asynchronous from top to bottom - no blocking calls.
+* Uses **AsyncOpenAI** client and the **SessionAwareToolProcessor** to
+  capture and persist tool-call hierarchies inside an in-memory session store.
+* Pretty-prints the resulting event tree and basic token/cost stats.
 
 Prerequisites::
 
     pip install openai "python-dotenv>=1.0"  # loads OPENAI_API_KEY
-    export OPENAI_API_KEY="sk‑..."
+    export OPENAI_API_KEY="sk-..."
 
 Run it::
 
@@ -31,18 +30,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-# A2A Session‑manager imports
-from a2a_session_manager.storage.providers.memory import InMemorySessionStore
-from a2a_session_manager.storage import SessionStoreProvider
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.session_aware_tool_processor import (
+# Session-manager imports
+from chuk_session_manager.storage.providers.memory import InMemorySessionStore
+from chuk_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.session_aware_tool_processor import (
     SessionAwareToolProcessor,
 )
 
-# Tools auto‑register with chuk_tool_processor when imported
+# Tools auto-register with chuk_tool_processor when imported
 from chuk_tool_processor.registry.tool_export import openai_functions
 from sample_tools import WeatherTool, SearchTool, CalculatorTool  # noqa: F401  pylint: disable=unused-import
 
@@ -64,7 +63,7 @@ async def get_openai_client() -> AsyncOpenAI:
 
     client = AsyncOpenAI(api_key=api_key)
 
-    # Cheap 1‑token call just to fail fast if the key / networking is wrong
+    # Cheap 1-token call just to fail fast if the key / networking is wrong
     await client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": "ping"}],
@@ -76,7 +75,7 @@ async def get_openai_client() -> AsyncOpenAI:
 async def pretty_event_tree(session: Session) -> None:
     """Walk the session's events and print them as an indented tree."""
 
-    # Map event‑id → list[child events]
+    # Map event-id → list[child events]
     children: dict[str, list[SessionEvent]] = {}
     for evt in session.events:
         parent = await evt.get_metadata("parent_event_id")
@@ -115,7 +114,7 @@ async def call_llm(client: AsyncOpenAI, prompt: str) -> dict:
 async def main() -> None:
     client = await get_openai_client()
 
-    # In‑memory store so the demo is completely self‑contained
+    # In-memory store so the demo is completely self-contained
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
 
@@ -127,7 +126,7 @@ async def main() -> None:
     user_prompt = (
         "I need to know if I should wear a jacket today in New York.\n"
         "Also, how much is 235.5 × 18.75?\n"
-        "Finally, find a couple of pages on climate‑change adaptation."
+        "Finally, find a couple of pages on climate-change adaptation."
     )
 
     # Record the USER event (with token accounting)

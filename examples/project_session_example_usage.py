@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 
 # ── Storage providers ────────────────────────────────────────────────
-from a2a_session_manager.storage import InMemorySessionStore, SessionStoreProvider
+from chuk_session_manager.storage import InMemorySessionStore, SessionStoreProvider
 
 # ── Account & Project layer ──────────────────────────────────────────
 from a2a_accounts.models.project import Project
@@ -30,11 +30,11 @@ from a2a_accounts.models.account import Account
 from a2a_accounts.models.access_levels import AccessLevel
 
 # ── Session layer ────────────────────────────────────────────────────
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.session_run import SessionRun
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.session_run import SessionRun
 
 
 async def print_event_tree(sess: Session, indent: int = 0) -> None:  # helper

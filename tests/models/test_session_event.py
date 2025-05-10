@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 import time
 from uuid import UUID
 
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.token_usage import TokenUsage
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.token_usage import TokenUsage
 
 
 def test_default_session_event_fields():

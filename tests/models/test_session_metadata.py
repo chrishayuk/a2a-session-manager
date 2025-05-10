@@ -3,7 +3,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 import time
 
-from a2a_session_manager.models.session_metadata import SessionMetadata
+from chuk_session_manager.models.session_metadata import SessionMetadata
 
 def test_default_timestamps_are_set_and_utc():
     before = datetime.now(timezone.utc)

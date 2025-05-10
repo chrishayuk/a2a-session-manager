@@ -31,7 +31,7 @@ from chuk_tool_processor.models.validated_tool import ValidatedTool
 # ───────────────────────────── helpers ──────────────────────────────
 _DDG_URL = "https://html.duckduckgo.com/html/"
 _HEADERS = {
-    "User-Agent": "a2a_demo_search_tool/1.3 (+https://example.com)"
+    "User-Agent": "chuk_demo_search_tool/1.3 (+https://example.com)"
 }
 
 

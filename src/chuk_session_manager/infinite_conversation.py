@@ -1,4 +1,4 @@
-# a2a_session_manager/infinite_conversation.py
+# chuk_session_manager/infinite_conversation.py
 """
 InfiniteConversationManager for handling conversations that exceed token limits.
 
@@ -10,11 +10,11 @@ from enum import Enum
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 import logging
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider
 
 # Type for LLM function callbacks
 LLMCallbackAsync = Callable[[List[Dict[str, str]], str], Any]

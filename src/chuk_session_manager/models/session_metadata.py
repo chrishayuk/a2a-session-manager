@@ -1,4 +1,4 @@
-# a2a_session_manager/models/session_metadata.py
+# chuk_session_manager/models/session_metadata.py
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional

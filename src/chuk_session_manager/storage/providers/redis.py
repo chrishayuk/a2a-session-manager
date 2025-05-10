@@ -1,4 +1,4 @@
-# src/a2a_session_manager/storage/providers/redis.py
+# src/chuk_session_manager/storage/providers/redis.py
 """
 Async Redis-based session storage implementation.
 """
@@ -26,9 +26,9 @@ except ImportError:
     except ImportError:
         REDIS_AVAILABLE = False
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.storage.base import SessionStoreInterface
-from a2a_session_manager.exceptions import SessionManagerError
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.storage.base import SessionStoreInterface
+from chuk_session_manager.exceptions import SessionManagerError
 
 # Type variable for serializable models
 T = TypeVar('T', bound='Session')

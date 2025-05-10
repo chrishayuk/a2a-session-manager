@@ -1,6 +1,6 @@
-# a2a_session_manager/models/session.py
+# chuk_session_manager/models/session.py
 """
-Session model for the A2A Session Manager with improved async support.
+Session model for the chuk session manager with improved async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field, model_validator
 import asyncio
 
 # Import models that Session depends on
-from a2a_session_manager.models.session_metadata import SessionMetadata
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.token_usage import TokenUsage, TokenSummary
+from chuk_session_manager.models.session_metadata import SessionMetadata
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.token_usage import TokenUsage, TokenSummary
 # Import SessionRun and RunStatus directly to avoid circular import
-from a2a_session_manager.models.session_run import SessionRun, RunStatus
+from chuk_session_manager.models.session_run import SessionRun, RunStatus
 
 MessageT = TypeVar('MessageT')
 
@@ -54,7 +54,7 @@ class Session(BaseModel, Generic[MessageT]):
         """
         if self.parent_id:
             # Import here to avoid circular import
-            from a2a_session_manager.storage import SessionStoreProvider
+            from chuk_session_manager.storage import SessionStoreProvider
             store = SessionStoreProvider.get_store()
             parent = await store.get(self.parent_id)
             if parent and self.id not in parent.child_ids:
@@ -91,7 +91,7 @@ class Session(BaseModel, Generic[MessageT]):
         if child_id not in self.child_ids:
             self.child_ids.append(child_id)
             # Save the updated session
-            from a2a_session_manager.storage import SessionStoreProvider
+            from chuk_session_manager.storage import SessionStoreProvider
             store = SessionStoreProvider.get_store()
             await store.save(self)
 
@@ -100,7 +100,7 @@ class Session(BaseModel, Generic[MessageT]):
         if child_id in self.child_ids:
             self.child_ids.remove(child_id)
             # Save the updated session
-            from a2a_session_manager.storage import SessionStoreProvider
+            from chuk_session_manager.storage import SessionStoreProvider
             store = SessionStoreProvider.get_store()
             await store.save(self)
 
@@ -110,7 +110,7 @@ class Session(BaseModel, Generic[MessageT]):
         current = self.parent_id
         
         # Import here to avoid circular import
-        from a2a_session_manager.storage import SessionStoreProvider
+        from chuk_session_manager.storage import SessionStoreProvider
         store = SessionStoreProvider.get_store()
         
         while current:
@@ -127,7 +127,7 @@ class Session(BaseModel, Generic[MessageT]):
         stack = list(self.child_ids)
         
         # Import here to avoid circular import
-        from a2a_session_manager.storage import SessionStoreProvider
+        from chuk_session_manager.storage import SessionStoreProvider
         store = SessionStoreProvider.get_store()
         
         while stack:
@@ -163,7 +163,7 @@ class Session(BaseModel, Generic[MessageT]):
         await self.add_event(event)
         
         # Save the session
-        from a2a_session_manager.storage import SessionStoreProvider
+        from chuk_session_manager.storage import SessionStoreProvider
         store = SessionStoreProvider.get_store()
         await store.save(self)
     
@@ -249,7 +249,7 @@ class Session(BaseModel, Generic[MessageT]):
         self.state[key] = value
         
         # Auto-save if needed (could be added as an option)
-        # from a2a_session_manager.storage import SessionStoreProvider
+        # from chuk_session_manager.storage import SessionStoreProvider
         # store = SessionStoreProvider.get_store()
         # await store.save(self)
     
@@ -289,7 +289,7 @@ class Session(BaseModel, Generic[MessageT]):
             del self.state[key]
             
             # Auto-save if needed (could be added as an option)
-            # from a2a_session_manager.storage import SessionStoreProvider
+            # from chuk_session_manager.storage import SessionStoreProvider
             # store = SessionStoreProvider.get_store()
             # await store.save(self)
 
@@ -309,7 +309,7 @@ class Session(BaseModel, Generic[MessageT]):
         await session.async_init()
         
         # Save the new session
-        from a2a_session_manager.storage import SessionStoreProvider
+        from chuk_session_manager.storage import SessionStoreProvider
         store = SessionStoreProvider.get_store()
         await store.save(session)
         

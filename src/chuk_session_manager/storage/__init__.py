@@ -1,27 +1,27 @@
-# a2a_session_manager/storage/__init__.py
+# chuk_session_manager/storage/__init__.py
 """
-Storage module for the A2A Session Manager.
+Storage module for the chuk session manager.
 """
 # Import base components first to avoid circular imports
 try:
-    from a2a_session_manager.storage.base import SessionStoreInterface, SessionStoreProvider
+    from chuk_session_manager.storage.base import SessionStoreInterface, SessionStoreProvider
 except ImportError:
     pass
 
 # Try to import providers if available
 try:
-    from a2a_session_manager.storage.providers.memory import InMemorySessionStore
+    from chuk_session_manager.storage.providers.memory import InMemorySessionStore
 except ImportError:
     pass
 
 try:
-    from a2a_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
+    from chuk_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
 except ImportError:
     pass
 
 # Try to import Redis - this is optional
 try:
-    from a2a_session_manager.storage.providers.redis import RedisSessionStore, create_redis_session_store
+    from chuk_session_manager.storage.providers.redis import RedisSessionStore, create_redis_session_store
     _has_redis = True
 except ImportError:
     _has_redis = False

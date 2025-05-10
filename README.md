@@ -1,4 +1,4 @@
-# A2A Session Manager
+# chuk session manager
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -7,7 +7,7 @@ A lightweight, flexible session management system for AI applications.
 
 ## Overview
 
-A2A Session Manager provides a comprehensive solution for tracking, persisting, and analyzing AI-based conversations and interactions. Whether you're building a simple chatbot or a complex agent-to-agent system, this library offers the building blocks to manage conversation state, hierarchy, and token usage.
+chuk session manager provides a comprehensive solution for tracking, persisting, and analyzing AI-based conversations and interactions. Whether you're building a simple chatbot or a complex agent-to-agent system, this library offers the building blocks to manage conversation state, hierarchy, and token usage.
 
 ## Features
 
@@ -26,29 +26,29 @@ A2A Session Manager provides a comprehensive solution for tracking, persisting, 
 
 ```bash
 # Basic installation
-pip install a2a-session-manager
+pip install chuk-session-manager
 
 # With Redis support
-pip install a2a-session-manager[redis]
+pip install chuk-session-manager[redis]
 
 # With tool processor integration
-pip install a2a-session-manager[tools]
+pip install chuk-session-manager[tools]
 
 # With development tools
-pip install a2a-session-manager[dev]
+pip install chuk-session-manager[dev]
 
 # Full installation with all dependencies
-pip install a2a-session-manager[full]
+pip install chuk-session-manager[full]
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 async def main():
     # Configure storage
@@ -90,7 +90,7 @@ Ideal for testing and temporary applications:
 
 ```python
 import asyncio
-from a2a_session_manager.storage import InMemorySessionStore, SessionStoreProvider
+from chuk_session_manager.storage import InMemorySessionStore, SessionStoreProvider
 
 async def example():
     # Configure store
@@ -115,8 +115,8 @@ Persists sessions to JSON files with async I/O:
 
 ```python
 import asyncio
-from a2a_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
-from a2a_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
+from chuk_session_manager.storage import SessionStoreProvider
 
 async def example():
     # Create file store
@@ -145,8 +145,8 @@ Distributed storage for production applications:
 
 ```python
 import asyncio
-from a2a_session_manager.storage.providers.redis import RedisSessionStore, create_redis_session_store
-from a2a_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.storage.providers.redis import RedisSessionStore, create_redis_session_store
+from chuk_session_manager.storage import SessionStoreProvider
 
 async def example():
     # Create Redis store
@@ -174,10 +174,10 @@ asyncio.run(example())
 
 ```python
 import asyncio
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 async def example():
     # Setup
@@ -222,8 +222,8 @@ asyncio.run(example())
 
 ```python
 import asyncio
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 async def example():
     # Setup
@@ -255,11 +255,11 @@ asyncio.run(example())
 
 ```python
 import asyncio
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.session_run import SessionRun
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.session_run import SessionRun
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 async def example():
     # Setup
@@ -300,12 +300,12 @@ Generate optimized prompts from session data for LLM calls using various strateg
 ```python
 import asyncio
 import json
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
-from a2a_session_manager.session_prompt_builder import build_prompt_from_session, PromptStrategy
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.session_prompt_builder import build_prompt_from_session, PromptStrategy
 
 async def example():
     # Setup
@@ -367,11 +367,11 @@ Track tool execution within your sessions using the SessionAwareToolProcessor:
 ```python
 import asyncio
 import json
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
-from a2a_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
 
 # Example tool result class
 class ToolResult:
@@ -455,12 +455,12 @@ asyncio.run(example())
 
 ## Web Framework Integration
 
-A2A Session Manager works seamlessly with modern web frameworks like FastAPI, Starlette, and ASGI-based Django:
+chuk session manager works seamlessly with modern web frameworks like FastAPI, Starlette, and ASGI-based Django:
 
 ```python
 from fastapi import FastAPI, HTTPException
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
 # Initialize FastAPI app
 app = FastAPI()

@@ -17,8 +17,8 @@ print(f"Project root: {project_root}")
 print(f"Source directory: {src_dir}")
 print(f"Python path: {sys.path}")
 
-# Check for src/a2a_session_manager directory
-package_dir = src_dir / "a2a_session_manager"
+# Check for src/chuk_session_manager directory
+package_dir = src_dir / "chuk_session_manager"
 if not package_dir.exists():
     print(f"WARNING: Package directory not found: {package_dir}")
 else:

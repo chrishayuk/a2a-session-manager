@@ -4,12 +4,12 @@ Tests for the base session store functionality.
 """
 import pytest
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.storage.base import SessionStoreProvider
-from a2a_session_manager.storage.providers.memory import InMemorySessionStore
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.session_event import SessionEvent
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.storage.base import SessionStoreProvider
+from chuk_session_manager.storage.providers.memory import InMemorySessionStore
 
 
 class TestSessionStoreProvider:

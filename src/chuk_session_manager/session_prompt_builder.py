@@ -1,4 +1,4 @@
-# a2a_session_manager/session_prompt_builder.py
+# chuk_session_manager/session_prompt_builder.py
 """
 Build optimized prompts for LLM calls from Session objects with async support.
 
@@ -14,11 +14,11 @@ from typing import List, Dict, Any, Optional, Literal, Union
 from enum import Enum
 import asyncio 
 
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.event_type import EventType
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.token_usage import TokenUsage
-from a2a_session_manager.storage import SessionStoreProvider
+from chuk_session_manager.models.session import Session
+from chuk_session_manager.models.event_type import EventType
+from chuk_session_manager.models.event_source import EventSource
+from chuk_session_manager.models.token_usage import TokenUsage
+from chuk_session_manager.storage import SessionStoreProvider
 
 logger = logging.getLogger(__name__)
 
