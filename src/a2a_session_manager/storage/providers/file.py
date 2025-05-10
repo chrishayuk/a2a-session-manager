@@ -1,12 +1,21 @@
 # a2a_session_manager/storage/providers/file.py
 """
-File-based session storage implementation.
+Async file-based session storage implementation.
 """
 import json
 import logging
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union, Generic
+
+# Check for aiofiles availability
+try:
+    import aiofiles
+    AIOFILES_AVAILABLE = True
+except ImportError:
+    AIOFILES_AVAILABLE = False
+    logging.warning("aiofiles package not installed; falling back to synchronous I/O in thread pool.")
 
 # session manager imports
 from a2a_session_manager.models.session import Session
@@ -46,10 +55,10 @@ class SessionSerializer(Generic[T]):
 
 class FileSessionStore(SessionStoreInterface, Generic[T]):
     """
-    A session store that persists sessions to JSON files.
+    An async file session store that persists sessions to JSON files.
     
     This implementation stores each session as a separate JSON file in
-    the specified directory.
+    the specified directory, using aiofiles for non-blocking I/O when available.
     """
     
     def __init__(self, 
@@ -57,7 +66,7 @@ class FileSessionStore(SessionStoreInterface, Generic[T]):
                 session_class: Type[T] = Session,
                 auto_save: bool = True):
         """
-        Initialize the file session store.
+        Initialize the async file session store.
         
         Args:
             directory: Directory where session files will be stored
@@ -81,8 +90,8 @@ class FileSessionStore(SessionStoreInterface, Generic[T]):
             return obj.isoformat()
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
-    def get(self, session_id: str) -> Optional[T]:
-        """Retrieve a session by its ID."""
+    async def get(self, session_id: str) -> Optional[T]:
+        """Async: Retrieve a session by its ID."""
         # Check cache first
         if session_id in self._cache:
             return self._cache[session_id]
@@ -93,8 +102,18 @@ class FileSessionStore(SessionStoreInterface, Generic[T]):
             return None
         
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            if AIOFILES_AVAILABLE:
+                async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                    data_str = await f.read()
+                    data = json.loads(data_str)
+            else:
+                # If aiofiles not available, use executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                data_str = await loop.run_in_executor(
+                    None,
+                    lambda: open(file_path, 'r', encoding='utf-8').read()
+                )
+                data = json.loads(data_str)
             
             session = SessionSerializer.from_dict(data, self.session_class)
             # Update cache
@@ -104,30 +123,40 @@ class FileSessionStore(SessionStoreInterface, Generic[T]):
             logger.error(f"Failed to load session {session_id}: {e}")
             return None
 
-    def save(self, session: T) -> None:
-        """Save a session to the store."""
+    async def save(self, session: T) -> None:
+        """Async: Save a session to the store."""
         session_id = session.id
         # Update cache
         self._cache[session_id] = session
         
         if self.auto_save:
-            self._save_to_file(session)
+            await self._save_to_file(session)
     
-    def _save_to_file(self, session: T) -> None:
-        """Save a session to its JSON file."""
+    async def _save_to_file(self, session: T) -> None:
+        """Async: Save a session to its JSON file."""
         session_id = session.id
         file_path = self._get_path(session_id)
         
         try:
             data = SessionSerializer.to_dict(session)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, default=self._json_default, indent=2)
+            json_str = json.dumps(data, default=self._json_default, indent=2)
+            
+            if AIOFILES_AVAILABLE:
+                async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+                    await f.write(json_str)
+            else:
+                # If aiofiles not available, use executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: open(file_path, 'w', encoding='utf-8').write(json_str)
+                )
         except (FileStorageError, IOError, TypeError) as e:
             logger.error(f"Failed to save session {session_id}: {e}")
             raise FileStorageError(f"Failed to save session {session_id}: {str(e)}")
 
-    def delete(self, session_id: str) -> None:
-        """Delete a session by its ID."""
+    async def delete(self, session_id: str) -> None:
+        """Async: Delete a session by its ID."""
         # Remove from cache
         if session_id in self._cache:
             del self._cache[session_id]
@@ -136,45 +165,56 @@ class FileSessionStore(SessionStoreInterface, Generic[T]):
         file_path = self._get_path(session_id)
         if file_path.exists():
             try:
-                file_path.unlink()
+                # Run in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, file_path.unlink)
             except IOError as e:
                 logger.error(f"Failed to delete session file {session_id}: {e}")
                 raise FileStorageError(f"Failed to delete session {session_id}: {str(e)}")
     
-    def list_sessions(self, prefix: str = "") -> List[str]:
-        """List all session IDs, optionally filtered by prefix."""
+    async def list_sessions(self, prefix: str = "") -> List[str]:
+        """Async: List all session IDs, optionally filtered by prefix."""
         try:
-            # Get all JSON files in the directory
-            files = self.directory.glob("*.json")
+            # Run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            files = await loop.run_in_executor(
+                None,
+                lambda: list(self.directory.glob("*.json"))
+            )
+            
             # Extract the session IDs (filenames without extension)
             session_ids = [f.stem for f in files]
+            
             # Filter by prefix if provided
             if prefix:
                 session_ids = [sid for sid in session_ids if sid.startswith(prefix)]
+                
             return session_ids
         except IOError as e:
             logger.error(f"Failed to list sessions: {e}")
             raise FileStorageError(f"Failed to list sessions: {str(e)}")
     
-    def flush(self) -> None:
-        """Force save all cached sessions to disk."""
+    async def flush(self) -> None:
+        """Async: Force save all cached sessions to disk."""
         for session in self._cache.values():
             try:
-                self._save_to_file(session)
+                await self._save_to_file(session)
             except FileStorageError:
                 # Already logged in _save_to_file
                 pass
     
-    def clear_cache(self) -> None:
-        """Clear the in-memory cache."""
+    async def clear_cache(self) -> None:
+        """Async: Clear the in-memory cache."""
         self._cache.clear()
 
 
-def create_file_session_store(directory: Union[str, Path], 
-                             session_class: Type[T] = Session,
-                             auto_save: bool = True) -> FileSessionStore[T]:
+async def create_file_session_store(
+    directory: Union[str, Path],
+    session_class: Type[T] = Session,
+    auto_save: bool = True
+) -> FileSessionStore[T]:
     """
-    Create a file-based session store.
+    Create an async file-based session store.
     
     Args:
         directory: Directory where session files will be stored

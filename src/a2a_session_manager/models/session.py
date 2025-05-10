@@ -1,6 +1,6 @@
 # a2a_session_manager/models/session.py
 """
-Session model for the A2A Session Manager.
+Session model for the A2A Session Manager with async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -18,7 +18,7 @@ from a2a_session_manager.models.session_run import SessionRun, RunStatus
 MessageT = TypeVar('MessageT')
 
 class Session(BaseModel, Generic[MessageT]):
-    """A standalone conversation session with hierarchical support."""
+    """A standalone conversation session with hierarchical support and async methods."""
     id: str = Field(default_factory=lambda: str(uuid4()))
     metadata: SessionMetadata = Field(default_factory=SessionMetadata)
 
@@ -35,16 +35,30 @@ class Session(BaseModel, Generic[MessageT]):
 
     @model_validator(mode="after")
     def _sync_hierarchy(cls, model: Session) -> Session:
-        """After creation, sync this session with its parent in the store."""
-        if model.parent_id:
+        """After creation, sync this session with its parent in the store.
+        
+        Note: This is synchronous for compatibility with Pydantic. 
+        For async parent syncing, use async_init() after creation.
+        """
+        # This validator will be called during model creation,
+        # but won't actually sync with storage - that requires async
+        return model
+    
+    async def async_init(self) -> None:
+        """
+        Initialize async components of the session.
+        
+        Call this after creating a new session to properly set up
+        parent-child relationships in the async storage.
+        """
+        if self.parent_id:
             # Import here to avoid circular import
             from a2a_session_manager.storage import SessionStoreProvider
             store = SessionStoreProvider.get_store()
-            parent = store.get(model.parent_id)
-            if parent and model.id not in parent.child_ids:
-                parent.child_ids.append(model.id)
-                store.save(parent)
-        return model
+            parent = await store.get(self.parent_id)
+            if parent and self.id not in parent.child_ids:
+                parent.child_ids.append(self.id)
+                await store.save(parent)
 
     @property
     def last_update_time(self) -> datetime:
@@ -71,18 +85,26 @@ class Session(BaseModel, Generic[MessageT]):
         """Return the total estimated cost of this session."""
         return self.token_summary.total_estimated_cost_usd
 
-    def add_child(self, child_id: str) -> None:
-        """Add a child session ID."""
+    async def add_child(self, child_id: str) -> None:
+        """Add a child session ID and save the session."""
         if child_id not in self.child_ids:
             self.child_ids.append(child_id)
+            # Save the updated session
+            from a2a_session_manager.storage import SessionStoreProvider
+            store = SessionStoreProvider.get_store()
+            await store.save(self)
 
-    def remove_child(self, child_id: str) -> None:
-        """Remove a child session ID."""
+    async def remove_child(self, child_id: str) -> None:
+        """Remove a child session ID and save the session."""
         if child_id in self.child_ids:
             self.child_ids.remove(child_id)
+            # Save the updated session
+            from a2a_session_manager.storage import SessionStoreProvider
+            store = SessionStoreProvider.get_store()
+            await store.save(self)
 
-    def ancestors(self) -> List[Session]:
-        """Fetch ancestor sessions from store."""
+    async def ancestors(self) -> List[Session]:
+        """Fetch ancestor sessions from store asynchronously."""
         result: List[Session] = []
         current = self.parent_id
         
@@ -91,15 +113,15 @@ class Session(BaseModel, Generic[MessageT]):
         store = SessionStoreProvider.get_store()
         
         while current:
-            parent = store.get(current)
+            parent = await store.get(current)
             if not parent:
                 break
             result.append(parent)
             current = parent.parent_id
         return result
 
-    def descendants(self) -> List[Session]:
-        """Fetch all descendant sessions from store in DFS order."""
+    async def descendants(self) -> List[Session]:
+        """Fetch all descendant sessions from store in DFS order asynchronously."""
         result: List[Session] = []
         stack = list(self.child_ids)
         
@@ -109,7 +131,7 @@ class Session(BaseModel, Generic[MessageT]):
         
         while stack:
             cid = stack.pop()
-            child = store.get(cid)
+            child = await store.get(cid)
             if child:
                 result.append(child)
                 stack.extend(child.child_ids)
@@ -128,6 +150,21 @@ class Session(BaseModel, Generic[MessageT]):
         # Update token summary if this event has token usage
         if event.token_usage:
             self.token_summary.add_usage(event.token_usage)
+    
+    async def add_event_and_save(self, event: SessionEvent[MessageT]) -> None:
+        """
+        Add an event to the session, update token tracking, and save the session.
+        
+        Args:
+            event: The event to add
+        """
+        # Add the event
+        self.add_event(event)
+        
+        # Save the session
+        from a2a_session_manager.storage import SessionStoreProvider
+        store = SessionStoreProvider.get_store()
+        await store.save(self)
     
     def get_token_usage_by_source(self) -> Dict[str, TokenSummary]:
         """
@@ -199,3 +236,25 @@ class Session(BaseModel, Generic[MessageT]):
             
         # If it's some other object, convert to string and count
         return TokenUsage.count_tokens(str(message), model)
+
+    @classmethod
+    async def create(cls, parent_id: Optional[str] = None, **kwargs) -> Session:
+        """
+        Create a new session asynchronously, handling parent-child relationships.
+        
+        Args:
+            parent_id: Optional parent session ID
+            **kwargs: Additional arguments for Session initialization
+            
+        Returns:
+            A new Session instance with parent-child relationships set up
+        """
+        session = cls(parent_id=parent_id, **kwargs)
+        await session.async_init()
+        
+        # Save the new session
+        from a2a_session_manager.storage import SessionStoreProvider
+        store = SessionStoreProvider.get_store()
+        await store.save(session)
+        
+        return session

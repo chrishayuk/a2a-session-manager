@@ -1,12 +1,11 @@
 # a2a_session_manager/models/session_event.py
 """
-Session event model for the A2A Session Manager.
+Session event model for the A2A Session Manager with async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Any, Dict, Generic, Optional, TypeVar
+from typing import Any, Dict, Generic, Optional, TypeVar, Union
 from uuid import uuid4
-from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 
 # session manager
@@ -29,11 +28,11 @@ class SessionEvent(BaseModel, Generic[MessageT]):
     source: EventSource = EventSource.LLM
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
-    # New field for token usage tracking
+    # Field for token usage tracking
     token_usage: Optional[TokenUsage] = None
     
     @classmethod
-    def create_with_tokens(
+    async def create_with_tokens(
         cls,
         message: MessageT,
         prompt: str,
@@ -45,7 +44,7 @@ class SessionEvent(BaseModel, Generic[MessageT]):
         metadata: Optional[Dict[str, Any]] = None
     ) -> SessionEvent[MessageT]:
         """
-        Create a session event with automatic token counting.
+        Create a session event with automatic token counting asynchronously.
         
         Args:
             message: The message content
@@ -60,11 +59,12 @@ class SessionEvent(BaseModel, Generic[MessageT]):
         Returns:
             A new SessionEvent with token usage information
         """
-        # Create token usage
+        # Important: Calculate tokens synchronously since we don't have async overload yet
+        # This is a temporary solution until TokenUsage.from_text is properly set up for overloading
         token_usage = TokenUsage.from_text(prompt, completion, model)
         
         # Create the event
-        return cls(
+        event = cls(
             message=message,
             task_id=task_id,
             type=type,
@@ -72,8 +72,10 @@ class SessionEvent(BaseModel, Generic[MessageT]):
             metadata=metadata or {},
             token_usage=token_usage
         )
+        
+        return event
     
-    def update_token_usage(
+    async def update_token_usage(
         self, 
         prompt: Optional[str] = None, 
         completion: Optional[str] = None,
@@ -97,14 +99,59 @@ class SessionEvent(BaseModel, Generic[MessageT]):
             
         # Calculate tokens if text is provided
         if prompt:
+            # Use synchronous method for now
             prompt_tokens = TokenUsage.count_tokens(prompt, self.token_usage.model)
             self.token_usage.prompt_tokens = prompt_tokens
             
         if completion:
+            # Use synchronous method for now
             completion_tokens = TokenUsage.count_tokens(completion, self.token_usage.model)
             self.token_usage.completion_tokens = completion_tokens
             
         # Recalculate totals
         self.token_usage.total_tokens = self.token_usage.prompt_tokens + self.token_usage.completion_tokens
         if self.token_usage.model:
+            # Use synchronous method for now
             self.token_usage.estimated_cost_usd = self.token_usage.calculate_cost()
+            
+    # Metadata async methods with clean names
+    async def get_metadata(self, key: str, default: Any = None) -> Any:
+        """Get a metadata value.
+        
+        Args:
+            key: The metadata key to retrieve
+            default: Default value to return if key not found
+            
+        Returns:
+            The metadata value or default if not found
+        """
+        return self.metadata.get(key, default)
+
+    async def set_metadata(self, key: str, value: Any) -> None:
+        """Set a metadata value.
+        
+        Args:
+            key: The metadata key to set
+            value: The value to set
+        """
+        self.metadata[key] = value
+        
+    async def has_metadata(self, key: str) -> bool:
+        """Check if a metadata key exists.
+        
+        Args:
+            key: The metadata key to check
+            
+        Returns:
+            True if the key exists in metadata
+        """
+        return key in self.metadata
+        
+    async def remove_metadata(self, key: str) -> None:
+        """Remove a metadata key-value pair.
+        
+        Args:
+            key: The metadata key to remove
+        """
+        if key in self.metadata:
+            del self.metadata[key]

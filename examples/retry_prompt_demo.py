@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # examples/retry_prompt_demo.py
 """
 Demonstrate SessionAwareToolProcessor retry logic, event hierarchy,
@@ -29,18 +30,16 @@ async def main() -> None:
     # 1) Session setup
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
-    session = Session()
-    store.save(session)
+    session = await Session.create()
 
     user_prompt = "Tell me the weather in London."
-    session.events.append(
+    await session.add_event_and_save(
         SessionEvent(
             message={"content": user_prompt},
             type=EventType.MESSAGE,
             source=EventSource.USER,
         )
     )
-    store.save(session)
 
     # 2) Processor with single retry
     processor = SessionAwareToolProcessor(
@@ -73,6 +72,9 @@ async def main() -> None:
     assistant_reply = await fake_llm("first call")
     results = await processor.process_llm_message(assistant_reply, fake_llm)
 
+    # Refresh session after processing
+    session = await store.get(session.id)
+
     # 4) Results
     print("\nTool execution results:")
     for r in results:
@@ -80,17 +82,19 @@ async def main() -> None:
 
     # 5) Event hierarchy
     print("\nHierarchical Session Events:")
-    def tree(evt: SessionEvent, depth=0):
+    async def tree(evt: SessionEvent, depth=0):
         pad = "  " * depth
         print(f"{pad}• {evt.type.value:9} id={evt.id}")
         for ch in [e for e in session.events
                    if e.metadata.get("parent_event_id") == evt.id]:
-            tree(ch, depth + 1)
-    for root in [e for e in session.events if "parent_event_id" not in e.metadata]:
-        tree(root)
+            await tree(ch, depth + 1)
+    
+    roots = [e for e in session.events if "parent_event_id" not in e.metadata]
+    for root in roots:
+        await tree(root)
 
     # 6) Next-turn prompt
-    next_prompt = build_prompt_from_session(session)
+    next_prompt = await build_prompt_from_session(session)
     print("\nNext-turn prompt that will be sent to the LLM:")
     pprint.pp(next_prompt)
 

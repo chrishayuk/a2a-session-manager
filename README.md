@@ -11,6 +11,7 @@ A2A Session Manager provides a comprehensive solution for tracking, persisting, 
 
 ## Features
 
+- **Async-First Design**: Full async support for modern web applications and non-blocking I/O
 - **Multiple Storage Backends**: Choose from in-memory, file-based, or Redis storage
 - **Hierarchical Sessions**: Create parent-child relationships between sessions
 - **Event Tracking**: Record all interactions with detailed metadata
@@ -43,40 +44,42 @@ pip install a2a-session-manager[full]
 ## Quick Start
 
 ```python
+import asyncio
 from a2a_session_manager.models.session import Session
 from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.event_source import EventSource
 from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
-# Configure storage
-store = InMemorySessionStore()
-SessionStoreProvider.set_store(store)
+async def main():
+    # Configure storage
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
 
-# Create a session
-session = Session()
+    # Create a session
+    session = await Session.create()
 
-# Add an event
-session.add_event(SessionEvent(
-    message="Hello, this is a user message",
-    source=EventSource.USER
-))
+    # Add an event
+    session.add_event(SessionEvent(
+        message="Hello, this is a user message",
+        source=EventSource.USER
+    ))
 
-# Track token usage
-llm_response = "Hello! I'm an AI assistant. How can I help you today?"
-llm_event = SessionEvent.create_with_tokens(
-    message=llm_response,
-    prompt="Hello, this is a user message",
-    completion=llm_response,
-    model="gpt-3.5-turbo",
-    source=EventSource.LLM
-)
-session.add_event(llm_event)
+    # Save session
+    await store.save(session)
 
-# Save session
-store.save(session)
+    # Retrieve session
+    retrieved_session = await store.get(session.id)
+    print(f"Retrieved session with ID: {retrieved_session.id}")
+    
+    # Work with hierarchical sessions
+    child = await Session.create(parent_id=session.id)
+    
+    # Navigate hierarchy
+    ancestors = await child.ancestors()
+    print(f"Child's ancestors: {[a.id for a in ancestors]}")
 
-# Retrieve session
-retrieved_session = store.get(session.id)
+# Run the async code
+asyncio.run(main())
 ```
 
 ## Storage Providers
@@ -86,21 +89,54 @@ retrieved_session = store.get(session.id)
 Ideal for testing and temporary applications:
 
 ```python
+import asyncio
 from a2a_session_manager.storage import InMemorySessionStore, SessionStoreProvider
 
-store = InMemorySessionStore()
-SessionStoreProvider.set_store(store)
+async def example():
+    # Configure store
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    
+    # Create and save a session
+    session = await Session.create()
+    await store.save(session)
+    
+    # List all sessions
+    all_sessions = await store.list_sessions()
+    print(f"All sessions: {all_sessions}")
+
+# Run the example
+asyncio.run(example())
 ```
 
 ### File-Based Storage
 
-Persists sessions to JSON files:
+Persists sessions to JSON files with async I/O:
 
 ```python
-from a2a_session_manager.storage import create_file_session_store, SessionStoreProvider
+import asyncio
+from a2a_session_manager.storage.providers.file import FileSessionStore, create_file_session_store
+from a2a_session_manager.storage import SessionStoreProvider
 
-store = create_file_session_store(directory="./sessions")
-SessionStoreProvider.set_store(store)
+async def example():
+    # Create file store
+    store = FileSessionStore(directory="./sessions")
+    SessionStoreProvider.set_store(store)
+    
+    # Create and save a session
+    session = await Session.create()
+    session.add_event(SessionEvent(
+        message="This is saved to a file asynchronously!",
+        source=EventSource.USER
+    ))
+    await store.save(session)
+    
+    # Retrieve the session
+    retrieved = await store.get(session.id)
+    print(f"Retrieved session with {len(retrieved.events)} events")
+
+# Run the example
+asyncio.run(example())
 ```
 
 ### Redis Storage
@@ -108,76 +144,153 @@ SessionStoreProvider.set_store(store)
 Distributed storage for production applications:
 
 ```python
-from a2a_session_manager.storage import create_redis_session_store, SessionStoreProvider
+import asyncio
+from a2a_session_manager.storage.providers.redis import RedisSessionStore, create_redis_session_store
+from a2a_session_manager.storage import SessionStoreProvider
 
-store = create_redis_session_store(
-    host="localhost",
-    port=6379,
-    db=0,
-    key_prefix="session:",
-    expiration_seconds=86400  # 24 hours
-)
-SessionStoreProvider.set_store(store)
+async def example():
+    # Create Redis store
+    store = await create_redis_session_store(
+        host="localhost",
+        port=6379,
+        db=0,
+        key_prefix="session:",
+        expiration_seconds=86400  # 24 hours
+    )
+    SessionStoreProvider.set_store(store)
+    
+    # Create and save a session
+    session = await Session.create()
+    await store.save(session)
+    
+    # Set expiration
+    await store.set_expiration(session.id, 3600)  # 1 hour
+
+# Run the example
+asyncio.run(example())
 ```
 
 ## Token Usage Tracking
 
 ```python
-# Create an event with automatic token counting
-event = SessionEvent.create_with_tokens(
-    message="This is the assistant's response",
-    prompt="What is the weather?",
-    completion="This is the assistant's response",
-    model="gpt-4-turbo"
-)
+import asyncio
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.models.session_event import SessionEvent
+from a2a_session_manager.models.event_source import EventSource
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
-# Get token usage
-print(f"Prompt tokens: {event.token_usage.prompt_tokens}")
-print(f"Completion tokens: {event.token_usage.completion_tokens}")
-print(f"Total tokens: {event.token_usage.total_tokens}")
-print(f"Estimated cost: ${event.token_usage.estimated_cost_usd:.6f}")
+async def example():
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    session = await Session.create()
+    
+    # Add user message (no token tracking needed)
+    user_message = "Explain quantum computing in simple terms"
+    session.add_event(SessionEvent(
+        message=user_message,
+        source=EventSource.USER
+    ))
+    
+    # Assistant response with token tracking
+    assistant_response = "Quantum computing uses qubits that can be both 0 and 1 simultaneously, unlike classical bits."
+    
+    # Create event with automatic token counting
+    assistant_event = SessionEvent.create_with_tokens(
+        message=assistant_response,
+        prompt=user_message,
+        completion=assistant_response,
+        model="gpt-4",
+        source=EventSource.LLM
+    )
+    session.add_event(assistant_event)
+    
+    # Save the session
+    await store.save(session)
+    
+    # Get token usage information
+    print(f"Total tokens: {session.total_tokens}")
+    print(f"Estimated cost: ${session.total_cost:.6f}")
+    print(f"Prompt tokens: {assistant_event.token_usage.prompt_tokens}")
+    print(f"Completion tokens: {assistant_event.token_usage.completion_tokens}")
+
+# Run the example
+asyncio.run(example())
 ```
 
 ## Hierarchical Sessions
 
 ```python
-# Create a parent session
-parent = Session()
-store.save(parent)
+import asyncio
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
-# Create child sessions
-child1 = Session(parent_id=parent.id)
-store.save(child1)
+async def example():
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    
+    # Create a parent session
+    parent = await Session.create()
+    
+    # Create child sessions
+    child1 = await Session.create(parent_id=parent.id)
+    child2 = await Session.create(parent_id=parent.id)
+    
+    # Create a grandchild session
+    grandchild = await Session.create(parent_id=child1.id)
+    
+    # Navigate hierarchy
+    ancestors = await grandchild.ancestors()
+    print(f"Grandchild ancestors: {[a.id for a in ancestors]}")
+    
+    descendants = await parent.descendants()
+    print(f"Parent descendants: {[d.id for d in descendants]}")
 
-child2 = Session(parent_id=parent.id)
-store.save(child2)
-
-# Navigate hierarchy
-ancestors = child1.ancestors()
-descendants = parent.descendants()
+# Run the example
+asyncio.run(example())
 ```
 
 ## Session Runs
 
 ```python
-# Create a session
-session = Session()
+import asyncio
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.models.session_event import SessionEvent
+from a2a_session_manager.models.session_run import SessionRun
+from a2a_session_manager.models.event_source import EventSource
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 
-# Start a run
-run = SessionRun()
-session.runs.append(run)
-run.mark_running()
-
-# Add events to the run
-session.events.append(
-    SessionEvent(
+async def example():
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    session = await Session.create()
+    
+    # Start a run
+    run = SessionRun()
+    run.mark_running()
+    session.runs.append(run)
+    
+    # Add events to the run
+    session.add_event(SessionEvent(
         message="Processing your request...",
+        source=EventSource.SYSTEM,
         task_id=run.id
-    )
-)
+    ))
+    
+    # Complete the run
+    run.mark_completed()
+    
+    # Save the session
+    await store.save(session)
+    
+    # Check run information
+    active_run = session.active_run
+    print(f"Active run: {active_run.id if active_run else 'None'}")
 
-# Complete the run
-run.mark_completed()
+# Run the example
+asyncio.run(example())
 ```
 
 ## Prompt Builder
@@ -185,30 +298,58 @@ run.mark_completed()
 Generate optimized prompts from session data for LLM calls using various strategies:
 
 ```python
-from a2a_session_manager.prompts import build_prompt_from_session, PromptStrategy
+import asyncio
+import json
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.models.session_event import SessionEvent
+from a2a_session_manager.models.event_source import EventSource
+from a2a_session_manager.models.event_type import EventType
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from a2a_session_manager.session_prompt_builder import build_prompt_from_session, PromptStrategy
 
-# Get a session
-session = store.get(session_id)
+async def example():
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    session = await Session.create()
+    
+    # Add a conversation with tool usage
+    session.add_event(SessionEvent(
+        message="What's the weather in New York?",
+        source=EventSource.USER
+    ))
+    
+    assistant_msg = SessionEvent(
+        message="I'll check the weather for you.",
+        source=EventSource.LLM
+    )
+    session.add_event(assistant_msg)
+    
+    # Add a tool call as a child of the assistant message
+    tool_event = SessionEvent(
+        message={
+            "tool_name": "get_weather",
+            "result": {"temperature": 72, "condition": "Sunny", "location": "New York"}
+        },
+        source=EventSource.SYSTEM,
+        type=EventType.TOOL_CALL,
+        metadata={"parent_event_id": assistant_msg.id}
+    )
+    session.add_event(tool_event)
+    
+    # Save the session
+    await store.save(session)
+    
+    # Build prompts with different strategies
+    minimal_prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
+    conversation_prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+    tool_prompt = await build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
+    
+    # Print one of the prompts
+    print(json.dumps(tool_prompt, indent=2))
 
-# Build a prompt using different strategies
-minimal_prompt = build_prompt_from_session(session, PromptStrategy.MINIMAL)
-conversation_prompt = build_prompt_from_session(session, PromptStrategy.CONVERSATION)
-tool_focused_prompt = build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
-hierarchical_prompt = build_prompt_from_session(
-    session, 
-    PromptStrategy.HIERARCHICAL,
-    include_parent_context=True
-)
-
-# Token-aware prompt building
-from a2a_session_manager.prompts import truncate_prompt_to_token_limit
-
-# Ensure the prompt fits within token limits
-truncated_prompt = truncate_prompt_to_token_limit(
-    conversation_prompt, 
-    max_tokens=4000,
-    model="gpt-4-turbo"
-)
+# Run the example
+asyncio.run(example())
 ```
 
 ### Prompt Strategies
@@ -219,107 +360,155 @@ truncated_prompt = truncate_prompt_to_token_limit(
 - **CONVERSATION**: Includes more conversation history for a natural flow
 - **HIERARCHICAL**: Leverages parent session context for multi-session conversations
 
-## Infinite Conversations
-
-Support for infinitely long conversations through automatic session segmentation and summarization:
-
-```python
-from a2a_session_manager.infinite_conversation import (
-    InfiniteConversationManager,
-    SummarizationStrategy
-)
-
-# Create an infinite conversation manager
-manager = InfiniteConversationManager(
-    token_threshold=6000,  # Create new segment when threshold is reached
-    summary_model="gpt-3.5-turbo",  # Model to use for summaries
-    summarization_strategy=SummarizationStrategy.TOPIC_BASED  # Summarization approach
-)
-
-# Process a message and get the current session ID
-async def process_user_message(session_id, message):
-    # LLM callback for summaries
-    async def llm_callback(messages, model):
-        # Your implementation to call an LLM API
-        return await call_llm_api(messages, model)
-    
-    # Process the message, possibly creating a new segment
-    current_session_id = await manager.process_message(
-        session_id,
-        message,
-        EventSource.USER,
-        llm_callback
-    )
-    
-    return current_session_id
-
-# Get context for an LLM call that spans multiple segments
-context = manager.build_context_for_llm(session_id)
-
-# Retrieve the full conversation history across all segments
-history = manager.get_full_conversation_history(session_id)
-```
-
-### Summarization Strategies
-
-- **BASIC**: General conversation summary
-- **KEY_POINTS**: Extracts key points and important information
-- **QUERY_FOCUSED**: Emphasizes user questions and interests
-- **TOPIC_BASED**: Organizes the summary by conversation topics
-
-## Session-Aware Tool Processing
+## Session-Aware Tool Processor
 
 Track tool execution within your sessions using the SessionAwareToolProcessor:
 
 ```python
+import asyncio
+import json
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.models.session_event import SessionEvent
+from a2a_session_manager.models.event_source import EventSource
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
 from a2a_session_manager.session_aware_tool_processor import SessionAwareToolProcessor
-from your_tool_package import ToolProcessor  # Your tool execution framework
 
-# Create a session-aware tool processor
-processor = SessionAwareToolProcessor(
-    session_id="your_session_id",
-    max_llm_retries=2,
-    llm_retry_prompt="Please provide a valid tool call."
-)
+# Example tool result class
+class ToolResult:
+    def __init__(self, tool, arguments, result):
+        self.tool = tool
+        self.arguments = arguments
+        self.result = result
+    
+    def model_dump(self):
+        return {"tool": self.tool, "arguments": self.arguments, "result": self.result}
 
-# Process LLM response with tool calls
-async def llm_call_fn(retry_prompt):
-    # Your LLM call implementation
-    return await call_llm_with_prompt(retry_prompt)
-
-# Process the LLM response
-llm_response = {
-    "tool_calls": [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "arguments": '{"location": "New York"}'
+async def example():
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    session = await Session.create()
+    
+    # Add initial user message
+    session.add_event(SessionEvent(
+        message="What's the weather in New York?",
+        source=EventSource.USER
+    ))
+    await store.save(session)
+    
+    # Create tool processor
+    processor = SessionAwareToolProcessor(session_id=session.id)
+    
+    # Simple process_text implementation
+    async def process_text(text):
+        data = json.loads(text)
+        results = []
+        for call in data.get("tool_calls", []):
+            fn = call.get("function", {})
+            name = fn.get("name")
+            if name == "get_weather":
+                args = json.loads(fn.get("arguments", "{}"))
+                result = {"temperature": 72, "condition": "Sunny", "location": args.get("location")}
+                results.append(ToolResult("get_weather", args, result))
+        return results
+    
+    # Monkey patch for demo
+    processor.process_text = process_text
+    
+    # LLM response with tool calls
+    assistant_msg = {
+        "role": "assistant",
+        "content": "I'll check the weather for you",
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": json.dumps({"location": "New York"})
+                }
             }
-        }
-    ]
-}
+        ]
+    }
+    
+    # Simple LLM callback
+    async def llm_callback(prompt):
+        return assistant_msg
+    
+    # Process the message
+    results = await processor.process_llm_message(assistant_msg, llm_callback)
+    
+    # Check results
+    print(f"Processed {len(results)} tool calls")
+    
+    # Check session events
+    updated_session = await store.get(session.id)
+    print(f"Session now has {len(updated_session.events)} events")
+    
+    # Get the tool call event
+    tool_events = [e for e in updated_session.events if e.type == EventType.TOOL_CALL]
+    if tool_events:
+        print(f"Tool result: {tool_events[0].message}")
 
-# Tool results will be automatically added to the session
-results = await processor.process_llm_message(llm_response, llm_call_fn)
+# Run the example
+asyncio.run(example())
 ```
 
-The SessionAwareToolProcessor:
-- Wraps tool execution in a session run
-- Records the original LLM response
-- Creates child events for each tool call
-- Handles retries when needed
-- Properly marks success and failure states
+## Web Framework Integration
+
+A2A Session Manager works seamlessly with modern web frameworks like FastAPI, Starlette, and ASGI-based Django:
+
+```python
+from fastapi import FastAPI, HTTPException
+from a2a_session_manager.models.session import Session
+from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+
+# Initialize FastAPI app
+app = FastAPI()
+
+# Configure storage at startup
+@app.on_event("startup")
+async def startup():
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+
+# Session API endpoints
+@app.post("/sessions")
+async def create_session():
+    session = await Session.create()
+    return {"id": session.id}
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    store = SessionStoreProvider.get_store()
+    session = await store.get(session_id)
+    
+    if not session:
+        raise HTTPException(404, "Session not found")
+        
+    return {
+        "id": session.id,
+        "events_count": len(session.events),
+        "runs_count": len(session.runs),
+        "child_ids": session.child_ids
+    }
+```
 
 ## Examples
 
 See the `examples/` directory for complete usage examples:
 
-- `session_example.py`: Basic session management
-- `token_tracking_example.py`: Token usage monitoring
+- `async_session_example.py`: Basic async session management
+- `fastapi_session_example.py`: Integration with FastAPI
+- `session_token_usage_example.py`: Token usage monitoring
 - `session_prompt_builder.py`: Building LLM prompts from sessions
 - `session_aware_tool_processor.py`: Integrating tool execution with sessions
 - `example_infinite_conversation.py`: Managing infinitely long conversations
+
+Run examples with:
+
+```bash
+uv run examples/async_session_example.py
+```
 
 ## Contributing
 

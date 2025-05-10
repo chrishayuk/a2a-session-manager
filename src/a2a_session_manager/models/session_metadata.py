@@ -13,11 +13,25 @@ class SessionMetadata(BaseModel):
     # Free-form properties for session-level identifiers and custom data
     properties: Dict[str, Any] = Field(default_factory=dict)
     
-    def set_property(self, key: str, value: Any) -> None:
-        """Add or update a custom metadata property."""
+    async def set_property(self, key: str, value: Any) -> None:
+        """Add or update a custom metadata property asynchronously."""
         self.properties[key] = value
+        self.updated_at = datetime.now(timezone.utc)
 
-    def get_property(self, key: str) -> Any:
-        """Retrieve a metadata property by key."""
+    async def get_property(self, key: str) -> Any:
+        """Retrieve a metadata property by key asynchronously."""
         return self.properties.get(key)
-
+        
+    async def update_timestamp(self) -> None:
+        """Update the updated_at timestamp asynchronously."""
+        self.updated_at = datetime.now(timezone.utc)
+        
+    @classmethod
+    async def create(cls, properties: Optional[Dict[str, Any]] = None) -> SessionMetadata:
+        """Create a new SessionMetadata instance asynchronously."""
+        now = datetime.now(timezone.utc)
+        return cls(
+            created_at=now,
+            updated_at=now,
+            properties=properties or {}
+        )

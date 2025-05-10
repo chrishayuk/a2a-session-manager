@@ -83,7 +83,7 @@ class SearchTool(ValidatedTool):
         return self.Result(results=hits)
 
     # optional async variant ------------------------------------------
-    async def _execute_async(self, *, query: str, max_results: int) -> Result:
+    async def _execute(self, *, query: str, max_results: int) -> Result:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, lambda: self._execute(query=query, max_results=max_results)

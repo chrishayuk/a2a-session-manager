@@ -22,7 +22,7 @@ Key points
 Run directly:
 
 ```bash
-uv run examples/session_aware_tool_processor_demo.py
+uv run examples/session_aware_tool_processor.py
 ```
 """
 
@@ -131,27 +131,42 @@ async def fake_llm(prompt: str, *, include_tool: bool) -> Dict[str, Any]:
 async def run_scenario(label: str, prompt: str, include_tool: bool, max_retries: int = 2):
     log.info("\n=== %s ===", label)
 
-    SessionStoreProvider.set_store(InMemorySessionStore())
-    store = SessionStoreProvider.get_store()
-    sess = Session()
-    store.save(sess)  # ← FIX: ensure processor can load the session
+    # Set up store
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    
+    # Create session using async factory
+    sess = await Session.create()
 
-    sess.events.append(SessionEvent(message=prompt, type=EventType.MESSAGE, source=EventSource.USER))
+    # Add user message
+    await sess.add_event_and_save(
+        SessionEvent(
+            message=prompt, 
+            type=EventType.MESSAGE, 
+            source=EventSource.USER
+        )
+    )
 
+    # Create processor
     proc = SessionAwareToolProcessor(session_id=sess.id, max_llm_retries=max_retries)
     proc.process_text = SimpleToolProcessor(TOOLS).process_text  # monkey-patch
 
+    # Get assistant message
     assistant_msg = await fake_llm(prompt, include_tool=include_tool)
 
+    # Create retry function
     async def retry_fn(_):
         return await fake_llm(prompt, include_tool=True)
 
     try:
+        # Process message
         results = await proc.process_llm_message(assistant_msg, retry_fn)
         log.info("Tool results:\n%s", json.dumps([r.model_dump() for r in results], indent=2))
     except RuntimeError as exc:
         log.info("Expected failure: %s", exc)
 
+    # Get updated session
+    sess = await store.get(sess.id)
     log.info("Session events: %d | runs: %d", len(sess.events), len(sess.runs))
 
 
@@ -163,16 +178,28 @@ async def main():
 
     # Multiple tools -----------------------------------------------
     log.info("\n=== Multiple tools ===")
-    SessionStoreProvider.set_store(InMemorySessionStore())
-    store = SessionStoreProvider.get_store()
-    sess = Session()
-    store.save(sess)  # ← FIX
+    
+    # Setup
+    store = InMemorySessionStore()
+    SessionStoreProvider.set_store(store)
+    
+    # Create session
+    sess = await Session.create()
 
-    sess.events.append(SessionEvent(message="Weather and 42*2", type=EventType.MESSAGE, source=EventSource.USER))
+    # Add user message
+    await sess.add_event_and_save(
+        SessionEvent(
+            message="Weather and 42*2", 
+            type=EventType.MESSAGE, 
+            source=EventSource.USER
+        )
+    )
 
+    # Create processor
     proc = SessionAwareToolProcessor(session_id=sess.id)
     proc.process_text = SimpleToolProcessor(TOOLS).process_text
 
+    # Create message with multiple tool calls
     llm_msg = {
         "role": "assistant",
         "content": None,
@@ -182,7 +209,12 @@ async def main():
         ],
     }
 
+    # Process message
     results = await proc.process_llm_message(llm_msg, lambda _: llm_msg)
+    
+    # Get updated session
+    sess = await store.get(sess.id)
+    
     log.info("Tool results (multi):\n%s", json.dumps([r.model_dump() for r in results], indent=2))
     log.info("Session events: %d | runs: %d", len(sess.events), len(sess.runs))
 

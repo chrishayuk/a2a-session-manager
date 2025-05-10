@@ -26,22 +26,44 @@ class SessionRun(BaseModel):
     status: RunStatus = RunStatus.PENDING
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    def mark_running(self) -> None:
-        """Mark the run as started/running."""
+    @classmethod
+    async def create(cls, metadata: Optional[Dict[str, Any]] = None) -> SessionRun:
+        """Create a new session run asynchronously."""
+        return cls(
+            status=RunStatus.PENDING,
+            metadata=metadata or {}
+        )
+
+    async def mark_running(self) -> None:
+        """Mark the run as started/running asynchronously."""
         self.status = RunStatus.RUNNING
         self.started_at = datetime.now(timezone.utc)
 
-    def mark_completed(self) -> None:
-        """Mark the run as completed successfully."""
+    async def mark_completed(self) -> None:
+        """Mark the run as completed successfully asynchronously."""
         self.status = RunStatus.COMPLETED
         self.ended_at = datetime.now(timezone.utc)
 
-    def mark_failed(self) -> None:
-        """Mark the run as failed."""
+    async def mark_failed(self) -> None:
+        """Mark the run as failed asynchronously."""
         self.status = RunStatus.FAILED
         self.ended_at = datetime.now(timezone.utc)
 
-    def mark_cancelled(self) -> None:
-        """Mark the run as cancelled."""
+    async def mark_cancelled(self) -> None:
+        """Mark the run as cancelled asynchronously."""
         self.status = RunStatus.CANCELLED
         self.ended_at = datetime.now(timezone.utc)
+        
+    async def update_metadata(self, key: str, value: Any) -> None:
+        """Update a metadata value asynchronously."""
+        self.metadata[key] = value
+        
+    async def get_metadata(self, key: str, default: Any = None) -> Any:
+        """Get a metadata value asynchronously."""
+        return self.metadata.get(key, default)
+        
+    async def get_duration(self) -> Optional[float]:
+        """Get the duration of the run in seconds asynchronously."""
+        if self.ended_at is None:
+            return None
+        return (self.ended_at - self.started_at).total_seconds()

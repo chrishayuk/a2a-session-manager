@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # examples/example_infinite_conversation.py
 """
-Example demonstrating the InfiniteConversationManager.
+Example demonstrating the InfiniteConversationManager with async support.
 
 This example shows how to:
-1. Set up and use the InfiniteConversationManager
+1. Set up and use the InfiniteConversationManager with the async API
 2. Handle conversations that span multiple session segments
 3. Build context from hierarchical sessions for LLM calls
 4. Simulate a long conversation that crosses token thresholds
@@ -94,8 +94,7 @@ async def demonstrate_infinite_conversation(
     )
     
     # Create the initial session
-    initial_session = Session()
-    store.save(initial_session)
+    initial_session = await Session.create()
     current_session_id = initial_session.id
     
     print(f"Created initial session: {current_session_id}")
@@ -126,7 +125,7 @@ async def demonstrate_infinite_conversation(
     
     # Now build context for an LLM call
     print("\nBuilding context for LLM from the final session...")
-    context = manager.build_context_for_llm(current_session_id)
+    context = await manager.build_context_for_llm(current_session_id)
     
     # Print the context structure
     print(f"\nContext includes {len(context)} messages:")
@@ -137,8 +136,8 @@ async def demonstrate_infinite_conversation(
     
     # Examine the session hierarchy
     print("\nExamining session hierarchy...")
-    session = store.get(current_session_id)
-    ancestors = session.ancestors()
+    session = await store.get(current_session_id)
+    ancestors = await session.ancestors()
     print(f"Final session {current_session_id} has {len(ancestors)} ancestors:")
     for i, ancestor in enumerate(ancestors):
         print(f"  Ancestor {i+1}: {ancestor.id}")
@@ -148,7 +147,7 @@ async def demonstrate_infinite_conversation(
     
     # Get full conversation history
     print("\nRetrieving full conversation history...")
-    history = manager.get_full_conversation_history(current_session_id)
+    history = await manager.get_full_conversation_history(current_session_id)
     print(f"Full history contains {len(history)} exchanges")
     
     return current_session_id, manager
@@ -182,8 +181,7 @@ async def compare_summarization_strategies():
         )
         
         # Create session
-        session = Session()
-        store.save(session)
+        session = await Session.create()
         session_id = session.id
         
         # Add messages until threshold is reached
@@ -202,7 +200,7 @@ async def compare_summarization_strategies():
             # If we've triggered a summarization, capture it and stop
             if new_session_id != session_id:
                 # Get the summary from the original session
-                orig_session = store.get(session_id)
+                orig_session = await store.get(session_id)
                 summary_event = next((e for e in reversed(orig_session.events) 
                                      if e.type == EventType.SUMMARY), None)
                 
@@ -246,8 +244,7 @@ async def demonstrate_full_conversation_history():
     manager = InfiniteConversationManager(token_threshold=1000)
     
     # Run the conversation to create multiple segments
-    session = Session()
-    store.save(session)
+    session = await Session.create()
     session_id = session.id
     
     print(f"Created initial session: {session_id}")
@@ -266,9 +263,9 @@ async def demonstrate_full_conversation_history():
         )
     
     # Now retrieve the full history
-    history = manager.get_full_conversation_history(session_id)
+    history = await manager.get_full_conversation_history(session_id)
     
-    print(f"\nRetrieved full conversation history across {len(manager.get_session_chain(session_id))} session segments")
+    print(f"\nRetrieved full conversation history across {len(await manager.get_session_chain(session_id))} session segments")
     print(f"History contains {len(history)} total exchanges\n")
     
     # Print a sample of the history

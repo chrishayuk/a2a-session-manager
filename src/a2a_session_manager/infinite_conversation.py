@@ -1,549 +1,320 @@
 # a2a_session_manager/infinite_conversation.py
 """
-InfiniteConversationManager for a2a_session_manager.
+InfiniteConversationManager for handling conversations that exceed token limits.
 
-This module provides a solution for managing conversations that can
-extend indefinitely without hitting token limits, using hierarchical
-sessions and automatic summarization.
-
-Features:
-- Automatic session segmentation based on token thresholds
-- Summary generation for conversation segments
-- Context bridges between parent and child sessions
-- Hierarchical context building for LLM calls
-- Support for multiple summarization strategies
+This module provides support for managing conversations that span multiple
+session segments, with automatic summarization and context building.
 """
-
-from typing import List, Dict, Any, Optional, Callable, Union, TypeVar, Generic, Protocol, Tuple
-from datetime import datetime, timezone
+from __future__ import annotations
+from enum import Enum
+from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 import logging
-import asyncio
-from enum import Enum  # Import Enum at the top of the file
 
-from a2a_session_manager.models.session import Session, MessageT
+from a2a_session_manager.models.session import Session
 from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.event_type import EventType
 from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.token_usage import TokenUsage
 from a2a_session_manager.storage import SessionStoreProvider
 
-# Set up logging
-logger = logging.getLogger(__name__)
+# Type for LLM function callbacks
+LLMCallbackAsync = Callable[[List[Dict[str, str]], str], Any]
 
-# Type for LLM callback
-T = TypeVar('T')
+logger = logging.getLogger(__name__)
 
 
 class SummarizationStrategy(str, Enum):
-    """Strategies for summarizing conversation segments."""
-    BASIC = "basic"             # Simple summary of the entire conversation
-    KEY_POINTS = "key_points"   # Extracts key points from the conversation
-    QUERY_FOCUSED = "query"     # Focuses summary on recent user queries
-    TOPIC_BASED = "topic"       # Organizes summary by conversation topics
+    """Different strategies for summarizing conversation segments."""
+    BASIC = "basic"               # General overview of the conversation
+    KEY_POINTS = "key_points"     # Focus on key information points
+    TOPIC_BASED = "topic_based"   # Organize by topics discussed
+    QUERY_FOCUSED = "query_focused"  # Focus on user's questions
 
 
-class LLMCallbackProtocol(Protocol):
-    """Protocol for LLM callback functions."""
-    async def __call__(self, messages: List[Dict[str, Any]], model: str) -> str: ...
-
-
-class InfiniteConversationManager(Generic[MessageT]):
+class InfiniteConversationManager:
     """
-    Manages infinitely long conversations using hierarchical sessions.
+    Manages conversations that can theoretically be infinite in length.
     
-    Uses session hierarchy and summarization to enable conversations
-    that can continue indefinitely without hitting token limits.
+    This manager automatically segments conversations that exceed token limits
+    by creating a chain of sessions with summaries that provide context.
     """
     
     def __init__(
         self,
-        token_threshold: int = 6000,
-        summary_model: str = "gpt-3.5-turbo",
-        max_context_depth: int = 3,
-        summarization_strategy: SummarizationStrategy = SummarizationStrategy.BASIC,
-        session_class: Optional[type] = None,
-        store_provider = None
+        token_threshold: int = 3000,
+        max_turns_per_segment: int = 20,
+        summarization_strategy: SummarizationStrategy = SummarizationStrategy.BASIC
     ):
         """
-        Initialize the InfiniteConversationManager.
+        Initialize the infinite conversation manager.
         
         Args:
             token_threshold: Maximum tokens before creating a new segment
-            summary_model: Model to use for generating summaries
-            max_context_depth: Maximum number of ancestor sessions to include
-            summarization_strategy: Strategy for generating summaries
-            session_class: Optional custom Session class
-            store_provider: Optional custom store provider
+            max_turns_per_segment: Maximum conversation turns per segment
+            summarization_strategy: Strategy to use for summarization
         """
         self.token_threshold = token_threshold
-        self.summary_model = summary_model
-        self.max_context_depth = max_context_depth
+        self.max_turns_per_segment = max_turns_per_segment
         self.summarization_strategy = summarization_strategy
-        self.session_class = session_class or Session
-        
-        # Get the store from the provider
-        self.store_provider = store_provider or SessionStoreProvider
-        self.store = self.store_provider.get_store()
     
     async def process_message(
         self,
         session_id: str,
-        message: Union[str, Dict[str, Any], MessageT],
+        message: str,
         source: EventSource,
-        llm_callback: LLMCallbackProtocol,
-        metadata: Optional[Dict[str, Any]] = None,
+        llm_callback: LLMCallbackAsync,
+        model: str = "gpt-3.5-turbo"
     ) -> str:
         """
-        Process a message, creating new session segments as needed.
+        Process a new message in the conversation.
+        
+        This method:
+        1. Adds the message to the current session
+        2. Checks if token threshold is exceeded
+        3. If needed, creates a summary and starts a new session
         
         Args:
-            session_id: Current session ID
-            message: Message content
-            source: Message source (USER or LLM)
-            llm_callback: Callback for LLM operations (summarization)
-            metadata: Optional metadata for the event
+            session_id: ID of the current session
+            message: The message content
+            source: Source of the message (USER or LLM)
+            llm_callback: Async callback for LLM calls
+            model: The model to use for token counting
             
         Returns:
-            The session ID to use (may be a new child session)
+            The current session ID (may be a new one if threshold was exceeded)
         """
+        # Get the store
+        store = SessionStoreProvider.get_store()
+        
         # Get the current session
-        session = self.store.get(session_id)
+        session = await store.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        # Add the message to the current session
-        event = SessionEvent(
+        # Add the message to the session
+        event = await SessionEvent.create_with_tokens(
             message=message,
+            prompt=message if source == EventSource.USER else "",
+            completion=message if source == EventSource.LLM else "",
+            model=model,
             source=source,
-            type=EventType.MESSAGE,
-            metadata=metadata or {}
+            type=EventType.MESSAGE
         )
-        session.add_event(event)
-        self.store.save(session)
+        await session.add_event_and_save(event)
         
-        # Check if we need to create a new segment
-        token_count = self._get_session_token_count(session)
-        logger.debug(f"Session {session_id} token count: {token_count}/{self.token_threshold}")
-        
-        if token_count >= self.token_threshold:
-            logger.info(f"Token threshold reached: {token_count} >= {self.token_threshold}")
-            logger.info(f"Creating a new session segment for session {session_id}")
+        # Check if we've exceeded the token threshold
+        if await self._should_create_new_segment(session):
+            logger.info(f"Token threshold exceeded for session {session_id}. Creating new segment.")
             
             # Create a summary of the current session
             summary = await self._create_summary(session, llm_callback)
             
-            # Add summary to the current session
+            # Add the summary to the current session
             summary_event = SessionEvent(
                 message=summary,
                 source=EventSource.SYSTEM,
-                type=EventType.SUMMARY,
-                metadata={"auto_generated": True, "summarization_strategy": self.summarization_strategy}
+                type=EventType.SUMMARY
             )
-            session.add_event(summary_event)
-            self.store.save(session)
+            await session.add_event_and_save(summary_event)
             
-            # Create a new child session
-            child = self.session_class(parent_id=session.id)
+            # Create a new session with the current as parent
+            new_session = await Session.create(parent_id=session_id)
             
-            # Add context bridge event to the new session
-            bridge_event = SessionEvent(
-                message=f"Continuation from previous conversation. Summary: {summary}",
-                source=EventSource.SYSTEM,
-                type=EventType.REFERENCE,  # Using REFERENCE type for context bridges
-                metadata={
-                    "parent_session_id": session.id,
-                    "context_bridge": True,
-                    "summary_reference": True
-                }
-            )
-            child.add_event(bridge_event)
-            
-            # Save the new child session
-            self.store.save(child)
-            
-            logger.info(f"Created new child session: {child.id}")
-            return child.id
+            # Return the new session ID
+            return new_session.id
         
-        # If no branching needed, return the current session ID
+        # No new segment needed, return the current session ID
         return session_id
     
-    def _get_session_token_count(self, session: Session) -> int:
+    async def _should_create_new_segment(self, session: Session) -> bool:
         """
-        Get the token count for a session.
-        
-        Uses the session's built-in token tracking if available,
-        or estimates based on event content.
+        Determine if we should create a new session segment.
         
         Args:
-            session: The session to count tokens for
+            session: The current session
             
         Returns:
-            Estimated token count
+            True if a new segment should be created
         """
-        # If session has total_tokens property, use it
-        if hasattr(session, 'total_tokens') and session.total_tokens > 0:
-            return session.total_tokens
+        # Check token count
+        if session.total_tokens >= self.token_threshold:
+            return True
         
-        # Otherwise estimate based on event content
-        total_tokens = 0
-        for event in session.events:
-            # If event has token usage info, use it
-            if hasattr(event, 'token_usage') and event.token_usage:
-                total_tokens += event.token_usage.total_tokens
-                continue
-                
-            # Otherwise estimate based on content
-            message = event.message
-            if isinstance(message, str):
-                # Rough approximation: 4 chars ≈ 1 token
-                total_tokens += len(message) // 4
-            elif isinstance(message, dict):
-                # For dict messages, estimate based on string representation
-                total_tokens += len(str(message)) // 4
-            else:
-                # For other types, use a conservative estimate
-                total_tokens += 10  # Minimal token count for structural elements
+        # Check turn count
+        message_events = [e for e in session.events if e.type == EventType.MESSAGE]
+        if len(message_events) >= self.max_turns_per_segment:
+            return True
         
-        return total_tokens
+        return False
     
     async def _create_summary(
         self,
         session: Session,
-        llm_callback: LLMCallbackProtocol
+        llm_callback: LLMCallbackAsync
     ) -> str:
         """
-        Create a summary of the session content using the selected strategy.
+        Create a summary of the session.
         
         Args:
             session: The session to summarize
-            llm_callback: Function to call the LLM for summarization
+            llm_callback: Async callback for LLM calls
             
         Returns:
-            A summary of the session content
+            A summary string
         """
-        # Use different prompt templates based on strategy
-        if self.summarization_strategy == SummarizationStrategy.KEY_POINTS:
-            return await self._create_key_points_summary(session, llm_callback)
-        elif self.summarization_strategy == SummarizationStrategy.QUERY_FOCUSED:
-            return await self._create_query_focused_summary(session, llm_callback)
-        elif self.summarization_strategy == SummarizationStrategy.TOPIC_BASED:
-            return await self._create_topic_based_summary(session, llm_callback)
-        else:
-            # Default to basic summary
-            return await self._create_basic_summary(session, llm_callback)
-    
-    async def _create_basic_summary(
-        self,
-        session: Session,
-        llm_callback: LLMCallbackProtocol
-    ) -> str:
-        """Create a basic summary of the entire conversation."""
-        # Format conversation for summarization
-        formatted_messages = self._format_conversation_for_summary(session)
-        
-        # Create summarization prompt
-        system_message = {
-            "role": "system",
-            "content": "Create a concise summary of this conversation that captures key information, main topics discussed, and important points raised. This summary will be used as context for continuing the conversation."
-        }
-        
-        # Build prompt and call LLM
-        prompt = [system_message] + formatted_messages
-        return await llm_callback(prompt, self.summary_model)
-    
-    async def _create_key_points_summary(
-        self,
-        session: Session,
-        llm_callback: LLMCallbackProtocol
-    ) -> str:
-        """Create a summary focused on extracting key points."""
-        # Format conversation for summarization
-        formatted_messages = self._format_conversation_for_summary(session)
-        
-        # Create summarization prompt
-        system_message = {
-            "role": "system",
-            "content": "Extract the key points and important information from this conversation. Focus on facts, decisions, questions, and conclusions rather than summarizing the entire conversation flow. This extraction will be used as context for continuing the conversation."
-        }
-        
-        # Build prompt and call LLM
-        prompt = [system_message] + formatted_messages
-        return await llm_callback(prompt, self.summary_model)
-    
-    async def _create_query_focused_summary(
-        self,
-        session: Session,
-        llm_callback: LLMCallbackProtocol
-    ) -> str:
-        """Create a summary focused on recent user queries and concerns."""
-        # Format conversation for summarization
-        formatted_messages = self._format_conversation_for_summary(session)
-        
-        # Create summarization prompt
-        system_message = {
-            "role": "system",
-            "content": "Summarize this conversation with a focus on the user's main questions, concerns, and interests. Prioritize capturing what matters most to the user and the key information they're seeking. This summary will be used as context for continuing the conversation."
-        }
-        
-        # Build prompt and call LLM
-        prompt = [system_message] + formatted_messages
-        return await llm_callback(prompt, self.summary_model)
-    
-    async def _create_topic_based_summary(
-        self,
-        session: Session,
-        llm_callback: LLMCallbackProtocol
-    ) -> str:
-        """Create a summary organized by conversation topics."""
-        # Format conversation for summarization
-        formatted_messages = self._format_conversation_for_summary(session)
-        
-        # Create summarization prompt
-        system_message = {
-            "role": "system",
-            "content": "Identify the main topics discussed in this conversation and create a summary organized by these topics. For each topic, capture the key points and relevant information. This organized summary will be used as context for continuing the conversation."
-        }
-        
-        # Build prompt and call LLM
-        prompt = [system_message] + formatted_messages
-        return await llm_callback(prompt, self.summary_model)
-    
-    def _format_conversation_for_summary(self, session: Session) -> List[Dict[str, Any]]:
-        """Format session events as a conversation for summarization."""
-        formatted_messages = []
-        
-        for event in session.events:
-            if event.type == EventType.MESSAGE:
-                # Determine role
-                role = "user" if event.source == EventSource.USER else "assistant"
-                
-                # Extract message content
-                content = event.message
-                if isinstance(content, dict) and "content" in content:
-                    content = content["content"]
-                elif not isinstance(content, str):
-                    content = str(content)
-                
-                # Add to formatted messages
-                formatted_messages.append({"role": role, "content": content})
-        
-        return formatted_messages
-    
-    def build_context_for_llm(
-        self,
-        session_id: str,
-        max_tokens: Optional[int] = None,
-        include_summaries: bool = True,
-        context_message_limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Build context for an LLM call using the session and its ancestors.
-        
-        Args:
-            session_id: The ID of the session to build context from
-            max_tokens: Optional maximum tokens to include
-            include_summaries: Whether to include summaries from ancestors
-            context_message_limit: Optional limit on number of messages to include
-            
-        Returns:
-            List of messages formatted for LLM API calls
-        """
-        session = self.store.get(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-        
-        # Start with messages from current session
-        messages = self._extract_messages_from_session(session, context_message_limit)
-        
-        # Add context from ancestors if summaries are enabled
-        if include_summaries:
-            # Get ancestors up to max depth
-            ancestors = session.ancestors()
-            ancestors = ancestors[:self.max_context_depth]
-            
-            # Add summaries in reverse order (oldest first)
-            summary_contexts = []
-            for ancestor in reversed(ancestors):
-                summary = self._get_latest_summary(ancestor)
-                if summary:
-                    summary_contexts.append({
-                        "role": "system", 
-                        "content": f"Previous conversation context: {summary}"
-                    })
-            
-            # Add summaries at the beginning
-            messages = summary_contexts + messages
-        
-        # Apply token limit if specified
-        if max_tokens:
-            messages = self._limit_context_tokens(messages, max_tokens)
-        
-        return messages
-    
-    def _extract_messages_from_session(
-        self,
-        session: Session,
-        limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Extract messages from a session in the format needed for LLM calls."""
         # Get message events
         message_events = [e for e in session.events if e.type == EventType.MESSAGE]
         
-        # Apply limit if specified (take most recent messages)
-        if limit and len(message_events) > limit:
-            message_events = message_events[-limit:]
-        
-        # Format as LLM messages
+        # Create a conversation history for the LLM
         messages = []
+        
+        # Add system prompt based on summarization strategy
+        system_prompt = self._get_summarization_prompt()
+        messages.append({"role": "system", "content": system_prompt})
+        
+        # Add the conversation history
         for event in message_events:
-            # Determine role
             role = "user" if event.source == EventSource.USER else "assistant"
-            
-            # Extract content
             content = event.message
-            if isinstance(content, dict) and "content" in content:
-                content = content["content"]
-            elif not isinstance(content, str):
-                content = str(content)
-            
             messages.append({"role": role, "content": content})
         
-        # Also include context bridge events as system messages
-        for event in session.events:
-            if (event.type == EventType.REFERENCE and 
-                event.metadata and 
-                event.metadata.get("context_bridge")):
-                messages.insert(0, {"role": "system", "content": event.message})
-        
-        return messages
+        # Call the LLM to generate a summary
+        summary = await llm_callback(messages)
+        return summary
     
-    def _get_latest_summary(self, session: Session) -> Optional[str]:
-        """Get the latest summary from a session."""
-        summary_events = [e for e in session.events if e.type == EventType.SUMMARY]
-        if not summary_events:
-            return None
-        
-        latest_summary = summary_events[-1]
-        content = latest_summary.message
-        
-        # Extract content if needed
-        if isinstance(content, dict) and "content" in content:
-            content = content["content"]
-        elif not isinstance(content, str):
-            content = str(content)
-            
-        return content
-    
-    def _limit_context_tokens(
-        self,
-        messages: List[Dict[str, Any]],
-        max_tokens: int
-    ) -> List[Dict[str, Any]]:
-        """Limit context to stay under token limit."""
-        if not messages:
-            return []
-            
-        # Ensure we have the first few system messages and the most recent messages
-        # Start by separating system messages from regular conversation
-        system_messages = [m for m in messages if m.get("role") == "system"]
-        conversation = [m for m in messages if m.get("role") != "system"]
-        
-        # Count tokens for system messages
-        system_token_count = sum(len(m.get("content", "")) // 4 for m in system_messages)
-        
-        # Calculate remaining tokens for conversation
-        remaining_tokens = max_tokens - system_token_count
-        
-        # If we don't have enough tokens for conversation, prioritize most recent messages
-        if remaining_tokens <= 0:
-            # Keep at least one recent message
-            return system_messages + [conversation[-1]] if conversation else []
-        
-        # Start with the most recent message
-        included_conversation = []
-        token_count = 0
-        
-        # Add messages from most recent to oldest until we hit the limit
-        for msg in reversed(conversation):
-            # Estimate tokens for this message
-            content = msg.get("content", "")
-            msg_tokens = len(content) // 4 if isinstance(content, str) else len(str(content)) // 4
-            
-            # If adding this message would exceed the limit, stop
-            if token_count + msg_tokens > remaining_tokens and included_conversation:
-                break
-                
-            # Add this message
-            included_conversation.append(msg)
-            token_count += msg_tokens
-        
-        # Reverse to get chronological order
-        included_conversation.reverse()
-        
-        # Combine system messages with included conversation
-        return system_messages + included_conversation
-    
-    def get_session_chain(self, session_id: str) -> List[Session]:
+    def _get_summarization_prompt(self) -> str:
         """
-        Get the complete chain of sessions from root to the specified session.
+        Get the prompt for summarization based on the selected strategy.
+        
+        Returns:
+            A prompt string
+        """
+        if self.summarization_strategy == SummarizationStrategy.BASIC:
+            return "Please provide a concise summary of this conversation. Focus on the main topic and key information exchanged."
+            
+        elif self.summarization_strategy == SummarizationStrategy.KEY_POINTS:
+            return "Summarize this conversation by identifying and listing the key points discussed. Focus on the most important information exchanged."
+            
+        elif self.summarization_strategy == SummarizationStrategy.TOPIC_BASED:
+            return "Create a summary of this conversation organized by topics discussed. Identify the main subject areas and the key points within each."
+            
+        elif self.summarization_strategy == SummarizationStrategy.QUERY_FOCUSED:
+            return "Summarize this conversation by focusing on the user's main questions and the key answers provided. Prioritize what the user was seeking to learn."
+            
+        else:
+            return "Please provide a brief summary of this conversation."
+    
+    async def build_context_for_llm(
+        self,
+        session_id: str,
+        max_messages: int = 10,
+        include_summaries: bool = True
+    ) -> List[Dict[str, str]]:
+        """
+        Build context for an LLM call from the current session and its ancestors.
         
         Args:
-            session_id: The ID of the session to get the chain for
+            session_id: ID of the current session
+            max_messages: Maximum number of recent messages to include
+            include_summaries: Whether to include summaries from parent sessions
             
         Returns:
-            List of sessions in the chain, from root to the specified session
+            A list of messages suitable for an LLM call
         """
-        session = self.store.get(session_id)
+        # Get the store
+        store = SessionStoreProvider.get_store()
+        
+        # Get the current session
+        session = await store.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        # Get ancestors
-        ancestors = session.ancestors()
+        # Initialize context
+        context = []
         
-        # Build chain in order from root to current
-        chain = list(reversed(ancestors))
-        chain.append(session)
+        # Add summaries from ancestor sessions if requested
+        if include_summaries:
+            # Get all ancestors
+            ancestors = await session.ancestors()
+            
+            # Get summaries from ancestors (most distant to most recent)
+            summaries = []
+            for ancestor in ancestors:
+                summary_event = next(
+                    (e for e in reversed(ancestor.events) if e.type == EventType.SUMMARY),
+                    None
+                )
+                if summary_event:
+                    summaries.append(summary_event.message)
+            
+            # If we have summaries, add them as a system message
+            if summaries:
+                context.append({
+                    "role": "system",
+                    "content": "Previous conversation context: " + " ".join(summaries)
+                })
         
-        return chain
+        # Get recent messages from the current session
+        message_events = [e for e in session.events if e.type == EventType.MESSAGE]
+        recent_messages = message_events[-max_messages:] if len(message_events) > max_messages else message_events
+        
+        # Add messages to context
+        for event in recent_messages:
+            role = "user" if event.source == EventSource.USER else "assistant"
+            content = event.message
+            context.append({"role": role, "content": content})
+        
+        return context
     
-    def get_full_conversation_history(
-        self,
-        session_id: str,
-        include_system_events: bool = False
-    ) -> List[Tuple[str, str, Any]]:
+    async def get_session_chain(self, session_id: str) -> List[Session]:
         """
-        Get the complete conversation history across all session segments.
+        Get the chain of sessions from the root to the current session.
         
         Args:
-            session_id: The ID of the session to get history for
-            include_system_events: Whether to include system events
+            session_id: ID of the current session
             
         Returns:
-            List of (role, source, content) tuples in chronological order
+            A list of sessions from root to current
         """
-        # Get the chain of sessions
-        chain = self.get_session_chain(session_id)
+        # Get the store
+        store = SessionStoreProvider.get_store()
         
-        # Extract messages from each session
+        # Get the current session
+        session = await store.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        
+        # Get ancestors and add the current session
+        ancestors = await session.ancestors()
+        return ancestors + [session]
+    
+    async def get_full_conversation_history(
+        self,
+        session_id: str
+    ) -> List[Tuple[str, EventSource, str]]:
+        """
+        Get the full conversation history across all session segments.
+        
+        Args:
+            session_id: ID of the current session
+            
+        Returns:
+            A list of (role, source, content) tuples representing the conversation
+        """
+        # Get the session chain
+        sessions = await self.get_session_chain(session_id)
+        
+        # Initialize history
         history = []
-        for session in chain:
-            for event in session.events:
-                # Skip non-message events unless include_system_events is True
-                if event.type != EventType.MESSAGE:
-                    if not include_system_events:
-                        continue
-                    
-                    # For system events we want to include
-                    if event.type == EventType.SUMMARY:
-                        history.append(("system", "SUMMARY", event.message))
-                    elif event.type == EventType.REFERENCE and event.metadata.get("context_bridge"):
-                        history.append(("system", "CONTEXT_BRIDGE", event.message))
-                    
-                    # Skip other system events
-                    continue
-                
-                # For message events
+        
+        # Process each session in the chain
+        for session in sessions:
+            # Get message events from this session
+            message_events = [e for e in session.events if e.type == EventType.MESSAGE]
+            
+            # Add to history
+            for event in message_events:
                 role = "user" if event.source == EventSource.USER else "assistant"
-                history.append((role, event.source.value, event.message))
+                content = event.message
+                history.append((role, event.source, content))
         
         return history

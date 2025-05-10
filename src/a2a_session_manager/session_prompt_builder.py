@@ -1,6 +1,6 @@
 # a2a_session_manager/session_prompt_builder.py
 """
-Build optimized prompts for LLM calls from Session objects.
+Build optimized prompts for LLM calls from Session objects with async support.
 
 This module provides flexible prompt construction from session data,
 with support for token management, relevance-based selection,
@@ -30,7 +30,7 @@ class PromptStrategy(str, Enum):
     HIERARCHICAL = "hierarchical"  # Include parent session context
 
 
-def build_prompt_from_session(
+async def build_prompt_from_session(
     session: Session,
     strategy: Union[PromptStrategy, str] = PromptStrategy.MINIMAL,
     max_tokens: Optional[int] = None,
@@ -39,7 +39,7 @@ def build_prompt_from_session(
     current_query: Optional[str] = None
 ) -> List[Dict[str, str]]:
     """
-    Build a prompt for the next LLM call from a Session.
+    Build a prompt for the next LLM call from a Session asynchronously.
     
     Args:
         session: The session to build a prompt from
@@ -65,21 +65,21 @@ def build_prompt_from_session(
     
     # Use the appropriate strategy
     if strategy == PromptStrategy.MINIMAL:
-        return _build_minimal_prompt(session)
+        return await _build_minimal_prompt(session)
     elif strategy == PromptStrategy.TASK_FOCUSED:
-        return _build_task_focused_prompt(session)
+        return await _build_task_focused_prompt(session)
     elif strategy == PromptStrategy.TOOL_FOCUSED:
-        return _build_tool_focused_prompt(session)
+        return await _build_tool_focused_prompt(session)
     elif strategy == PromptStrategy.CONVERSATION:
-        return _build_conversation_prompt(session, max_history=5)
+        return await _build_conversation_prompt(session, max_history=5)
     elif strategy == PromptStrategy.HIERARCHICAL:
-        return _build_hierarchical_prompt(session, include_parent_context)
+        return await _build_hierarchical_prompt(session, include_parent_context)
     else:
         # Default to minimal
-        return _build_minimal_prompt(session)
+        return await _build_minimal_prompt(session)
 
 
-def _build_minimal_prompt(session: Session) -> List[Dict[str, str]]:
+async def _build_minimal_prompt(session: Session) -> List[Dict[str, str]]:
     """
     Build a minimal prompt from a session.
     
@@ -165,7 +165,7 @@ def _build_minimal_prompt(session: Session) -> List[Dict[str, str]]:
     return prompt
 
 
-def _build_task_focused_prompt(session: Session) -> List[Dict[str, str]]:
+async def _build_task_focused_prompt(session: Session) -> List[Dict[str, str]]:
     """
     Build a task-focused prompt.
     
@@ -243,7 +243,7 @@ def _build_task_focused_prompt(session: Session) -> List[Dict[str, str]]:
     return prompt
 
 
-def _build_tool_focused_prompt(session: Session) -> List[Dict[str, str]]:
+async def _build_tool_focused_prompt(session: Session) -> List[Dict[str, str]]:
     """
     Build a tool-focused prompt.
     
@@ -310,7 +310,7 @@ def _build_tool_focused_prompt(session: Session) -> List[Dict[str, str]]:
     return prompt
 
 
-def _build_conversation_prompt(
+async def _build_conversation_prompt(
     session: Session, 
     max_history: int = 5
 ) -> List[Dict[str, str]]:
@@ -374,7 +374,7 @@ def _build_conversation_prompt(
     return prompt
 
 
-def _build_hierarchical_prompt(
+async def _build_hierarchical_prompt(
     session: Session,
     include_parent_context: bool = True
 ) -> List[Dict[str, str]]:
@@ -386,12 +386,12 @@ def _build_hierarchical_prompt(
     - Includes summaries from parent sessions if available
     """
     # Start with the minimal prompt
-    prompt = _build_minimal_prompt(session)
+    prompt = await _build_minimal_prompt(session)
     
     # If parent context is enabled and session has a parent
     if include_parent_context and session.parent_id:
         store = SessionStoreProvider.get_store()
-        parent = store.get(session.parent_id)
+        parent = await store.get(session.parent_id)
         
         if parent:
             # Find the most recent summary in parent
@@ -499,3 +499,17 @@ def truncate_prompt_to_token_limit(
         result = truncated
     
     return result
+
+
+async def truncate_prompt_to_token_limit(
+    prompt: List[Dict[str, str]],
+    max_tokens: int,
+    model: str = "gpt-3.5-turbo"
+) -> List[Dict[str, str]]:
+    """
+    Async version of truncate_prompt_to_token_limit.
+    This function is a thin wrapper around the synchronous version
+    since the token counting operation is CPU-bound and not I/O bound.
+    """
+    # The operation is CPU-bound, so we just return the sync version
+    return truncate_prompt_to_token_limit(prompt, max_tokens, model)

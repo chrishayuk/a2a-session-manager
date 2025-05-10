@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # examples/session_prompt_builder.py
 """
-Example script demonstrating the use of the Session Prompt Builder.
+Example script demonstrating the use of the Session Prompt Builder with async API.
 
 This example shows how to:
 1. Create and manipulate sessions
@@ -22,7 +22,12 @@ from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.models.event_type import EventType
 from a2a_session_manager.models.event_source import EventSource
 from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
-from a2a_session_manager.session_prompt_builder import build_prompt_from_session, PromptStrategy
+from a2a_session_manager.session_prompt_builder import (
+    build_prompt_from_session, 
+    PromptStrategy, 
+    truncate_prompt_to_token_limit,
+    truncate_prompt_to_token_limit  # Added this import
+)
 
 # Configure logging
 logging.basicConfig(
@@ -82,19 +87,18 @@ async def demonstrate_minimal_strategy():
     """Demonstrate the minimal prompt strategy."""
     logger.info("\n=== Demonstrating MINIMAL Prompt Strategy ===")
     
-    # Create a new session
-    session = Session()
+    # Create a new session using async factory method
+    session = await Session.create()
     
     # Add a user message
-    user_msg = SessionEvent(
+    await session.add_event_and_save(SessionEvent(
         message="What's the weather like in New York?",
         source=EventSource.USER,
         type=EventType.MESSAGE
-    )
-    session.add_event(user_msg)
+    ))
     
     # Build prompt with minimal strategy
-    prompt = build_prompt_from_session(session, PromptStrategy.MINIMAL)
+    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
     logger.info(f"Minimal prompt with only user message:\n{json.dumps(prompt, indent=2)}")
     
     # Call LLM
@@ -106,7 +110,7 @@ async def demonstrate_minimal_strategy():
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    session.add_event(assistant_msg)
+    await session.add_event_and_save(assistant_msg)
     
     # Execute tool call if present
     if "tool_calls" in llm_response:
@@ -130,10 +134,10 @@ async def demonstrate_minimal_strategy():
                     type=EventType.TOOL_CALL,
                     metadata={"parent_event_id": assistant_msg.id}
                 )
-                session.add_event(tool_event)
+                await session.add_event_and_save(tool_event)
     
     # Build prompt again with the updated session
-    prompt = build_prompt_from_session(session, PromptStrategy.MINIMAL)
+    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
     logger.info(f"Minimal prompt after tool execution:\n{json.dumps(prompt, indent=2)}")
     
     return session
@@ -143,7 +147,7 @@ async def demonstrate_conversation_strategy():
     logger.info("\n=== Demonstrating CONVERSATION Prompt Strategy ===")
     
     # Create a new session
-    session = Session()
+    session = await Session.create()
     
     # Simulate a 3-turn conversation
     conversation = [
@@ -161,10 +165,10 @@ async def demonstrate_conversation_strategy():
             source=EventSource.USER if msg["role"] == "user" else EventSource.LLM,
             type=EventType.MESSAGE
         )
-        session.add_event(event)
+        await session.add_event_and_save(event)
     
     # Build prompt with conversation strategy
-    prompt = build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+    prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
     logger.info(f"Conversation prompt:\n{json.dumps(prompt, indent=2)}")
     
     return session
@@ -178,52 +182,46 @@ async def demonstrate_hierarchical_strategy():
     SessionStoreProvider.set_store(store)
     
     # Create parent session
-    parent = Session()
+    parent = await Session.create()
     
     # Add messages to parent
-    parent.add_event(SessionEvent(
+    await parent.add_event_and_save(SessionEvent(
         message="I want to plan a trip to Japan.",
         source=EventSource.USER,
         type=EventType.MESSAGE
     ))
     
-    parent.add_event(SessionEvent(
+    await parent.add_event_and_save(SessionEvent(
         message="Great! Japan is a wonderful destination. What kind of activities are you interested in?",
         source=EventSource.LLM,
         type=EventType.MESSAGE
     ))
     
-    parent.add_event(SessionEvent(
+    await parent.add_event_and_save(SessionEvent(
         message="I'm interested in both historical sites and nature.",
         source=EventSource.USER,
         type=EventType.MESSAGE
     ))
     
     # Add a summary to parent
-    parent.add_event(SessionEvent(
+    await parent.add_event_and_save(SessionEvent(
         message="User is planning a trip to Japan and is interested in historical sites and nature.",
         source=EventSource.SYSTEM,
         type=EventType.SUMMARY
     ))
     
-    # Save parent
-    store.save(parent)
-    
     # Create child session
-    child = Session(parent_id=parent.id)
+    child = await Session.create(parent_id=parent.id)
     
     # Add message to child
-    child.add_event(SessionEvent(
+    await child.add_event_and_save(SessionEvent(
         message="Can you suggest an itinerary for 7 days?",
         source=EventSource.USER,
         type=EventType.MESSAGE
     ))
     
-    # Save child
-    store.save(child)
-    
     # Build prompt with hierarchical strategy
-    prompt = build_prompt_from_session(
+    prompt = await build_prompt_from_session(
         child, 
         PromptStrategy.HIERARCHICAL,
         include_parent_context=True
@@ -237,10 +235,10 @@ async def demonstrate_tool_focused_strategy():
     logger.info("\n=== Demonstrating TOOL_FOCUSED Prompt Strategy ===")
     
     # Create a session with tool calls
-    session = Session()
+    session = await Session.create()
     
     # Add user message
-    session.add_event(SessionEvent(
+    await session.add_event_and_save(SessionEvent(
         message="What's the weather in New York, Tokyo, and London?",
         source=EventSource.USER,
         type=EventType.MESSAGE
@@ -252,7 +250,7 @@ async def demonstrate_tool_focused_strategy():
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    session.add_event(assistant_msg)
+    await session.add_event_and_save(assistant_msg)
     
     # Add multiple tool calls
     cities = ["New York", "Tokyo", "London"]
@@ -273,10 +271,10 @@ async def demonstrate_tool_focused_strategy():
             type=EventType.TOOL_CALL,
             metadata={"parent_event_id": assistant_msg.id}
         )
-        session.add_event(tool_event)
+        await session.add_event_and_save(tool_event)
     
     # Build prompt with tool-focused strategy
-    prompt = build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
+    prompt = await build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
     logger.info(f"Tool-focused prompt:\n{json.dumps(prompt, indent=2)}")
     
     return session
@@ -286,33 +284,32 @@ async def demonstrate_token_management():
     logger.info("\n=== Demonstrating Token Management ===")
     
     # Create a session with many messages
-    session = Session()
+    session = await Session.create()
     
     # Add a long conversation
     for i in range(20):
         # Add user message
-        session.add_event(SessionEvent(
+        await session.add_event_and_save(SessionEvent(
             message=f"This is user message #{i+1}. It contains some text to increase token count.",
             source=EventSource.USER,
             type=EventType.MESSAGE
         ))
         
         # Add assistant message
-        session.add_event(SessionEvent(
+        await session.add_event_and_save(SessionEvent(
             message=f"This is assistant response #{i+1}. It also contains extra text to make the prompt longer.",
             source=EventSource.LLM,
             type=EventType.MESSAGE
         ))
     
     # Build prompt with conversation strategy and token limit
-    from a2a_session_manager.session_prompt_builder import truncate_prompt_to_token_limit
     
     # First get the full prompt
-    full_prompt = build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+    full_prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
     logger.info(f"Full prompt length: {len(full_prompt)} messages")
     
     # Then truncate it
-    truncated_prompt = truncate_prompt_to_token_limit(full_prompt, max_tokens=500)
+    truncated_prompt = await truncate_prompt_to_token_limit(full_prompt, max_tokens=500)
     logger.info(f"Truncated prompt length: {len(truncated_prompt)} messages")
     
     # Show the difference

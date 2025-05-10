@@ -10,7 +10,7 @@ These tests focus on more complex scenarios and edge cases:
 """
 
 import pytest
-import pytest_asyncio
+import pytestio
 import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -126,7 +126,7 @@ def session_with_token_usage(store):
 
 
 # Create async fixture for the multi-segment hierarchy
-@pytest_asyncio.fixture
+@pytestio.fixture
 async def multi_segment_hierarchy(store, llm_callback):
     """Create a complex hierarchy with multiple segments for testing."""
     # Create conversation manager with low threshold

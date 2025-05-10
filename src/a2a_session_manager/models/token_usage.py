@@ -7,7 +7,7 @@ It optionally uses tiktoken for accurate token counting if available.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Dict, Optional, Union, List, Any
+from typing import Dict, Optional, Union, List, Any, overload
 from uuid import uuid4
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -81,6 +81,16 @@ class TokenUsage(BaseModel):
         
         return round(input_cost + output_cost, 6)
     
+    # Async version as a separate method
+    async def calculate_cost(self) -> float:
+        """
+        Async version of calculate_cost.
+        
+        Returns:
+            Estimated cost in USD
+        """
+        return self.calculate_cost()
+    
     def update(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         """
         Update token counts and recalculate totals and costs.
@@ -95,6 +105,22 @@ class TokenUsage(BaseModel):
         
         if self.model:
             self.estimated_cost_usd = self.calculate_cost()
+    
+    # Async version as a separate method
+    async def update(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+        """
+        Async version of update.
+        
+        Args:
+            prompt_tokens: Additional prompt tokens to add
+            completion_tokens: Additional completion tokens to add
+        """
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.total_tokens = self.prompt_tokens + self.completion_tokens
+        
+        if self.model:
+            self.estimated_cost_usd = await self.calculate_cost()
     
     @classmethod
     def from_text(
@@ -125,6 +151,28 @@ class TokenUsage(BaseModel):
             completion_tokens=completion_tokens,
             model=model
         )
+    
+    # Async version as a separate method 
+    @classmethod
+    async def from_text(
+        cls, 
+        prompt: str, 
+        completion: Optional[str] = None, 
+        model: str = "gpt-3.5-turbo"
+    ) -> TokenUsage:
+        """
+        Async version of from_text.
+        
+        Args:
+            prompt: The prompt/input text
+            completion: The completion/output text (optional)
+            model: The model name to use for counting and pricing
+            
+        Returns:
+            A TokenUsage instance with token counts
+        """
+        # Token counting is CPU-bound, not I/O bound
+        return cls.from_text(prompt, completion, model)
     
     @staticmethod
     def count_tokens(text: Optional[str], model: str = "gpt-3.5-turbo") -> int:
@@ -160,6 +208,22 @@ class TokenUsage(BaseModel):
         # Simple approximation: ~4 chars per token for English text
         # This is a very rough estimate and shouldn't be relied upon for billing
         return int(len(text) / 4)
+    
+    # Async version as a separate method
+    @staticmethod
+    async def count_tokens(text: Optional[str], model: str = "gpt-3.5-turbo") -> int:
+        """
+        Async version of count_tokens.
+        
+        Args:
+            text: The text to count tokens for
+            model: The model name to use for counting
+            
+        Returns:
+            The number of tokens
+        """
+        # Token counting is CPU-bound, not I/O bound
+        return TokenUsage.count_tokens(text, model)
     
     def __add__(self, other: TokenUsage) -> TokenUsage:
         """
@@ -215,6 +279,34 @@ class TokenSummary(BaseModel):
         if usage.model:
             if usage.model in self.usage_by_model:
                 self.usage_by_model[usage.model].update(
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens
+                )
+            else:
+                self.usage_by_model[usage.model] = TokenUsage(
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    model=usage.model
+                )
+                
+    # Async version as a separate method
+    async def add_usage(self, usage: TokenUsage) -> None:
+        """
+        Async version of add_usage.
+        
+        Args:
+            usage: The TokenUsage to add
+        """
+        self.total_prompt_tokens += usage.prompt_tokens
+        self.total_completion_tokens += usage.completion_tokens
+        self.total_tokens += usage.total_tokens
+        
+        if usage.estimated_cost_usd is not None:
+            self.total_estimated_cost_usd += usage.estimated_cost_usd
+        
+        if usage.model:
+            if usage.model in self.usage_by_model:
+                await self.usage_by_model[usage.model].update(
                     prompt_tokens=usage.prompt_tokens,
                     completion_tokens=usage.completion_tokens
                 )

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # examples/session_token_usage_example.py
+#!/usr/bin/env python3
+# examples/async_session_token_usage_example.py
 """
-Example demonstrating token tracking with the A2A Session Manager.
+Async example demonstrating token tracking with the A2A Session Manager.
 
 This example shows how to:
-1. Track token usage across LLM interactions
+1. Track token usage across LLM interactions using async/await patterns
 2. Calculate estimated costs
 3. Generate token usage reports
 4. Use tiktoken for accurate token counting (if available)
 """
 import json
 import logging
+import asyncio
 from datetime import datetime, timezone
 
 from a2a_session_manager.models.session import Session
@@ -28,20 +31,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_storage():
-    """Initialize and configure the session store."""
+async def setup_storage():
+    """Initialize and configure the session store asynchronously."""
     # Create an in-memory store for this example
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
     return store
 
 
-def create_session_with_token_tracking():
+async def create_session_with_token_tracking():
     """Create a session with token tracking for LLM interactions."""
     logger.info("Creating a session with token tracking...")
     
-    # Create a new session
-    session = Session()
+    # Create a new session using async factory method
+    session = await Session.create()
     logger.info(f"Created session with ID: {session.id}")
     
     # Example prompt from user
@@ -53,7 +56,7 @@ def create_session_with_token_tracking():
         source=EventSource.USER,
         type=EventType.MESSAGE
     )
-    session.add_event(user_event)
+    await session.add_event_and_save(user_event)
     
     # Example LLM response
     llm_response = """
@@ -69,7 +72,7 @@ def create_session_with_token_tracking():
     """
     
     # Create LLM event with token tracking
-    llm_event = SessionEvent.create_with_tokens(
+    llm_event = await SessionEvent.create_with_tokens(
         message=llm_response,
         prompt=user_prompt,
         completion=llm_response,
@@ -77,7 +80,7 @@ def create_session_with_token_tracking():
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    session.add_event(llm_event)
+    await session.add_event_and_save(llm_event)
     
     # Add another user question
     second_user_prompt = "What are some practical applications of quantum computing?"
@@ -86,7 +89,7 @@ def create_session_with_token_tracking():
         source=EventSource.USER,
         type=EventType.MESSAGE
     )
-    session.add_event(second_user_event)
+    await session.add_event_and_save(second_user_event)
     
     # Add another LLM response
     second_llm_response = """
@@ -110,7 +113,7 @@ def create_session_with_token_tracking():
     """
     
     # Create second LLM event with token tracking
-    second_llm_event = SessionEvent.create_with_tokens(
+    second_llm_event = await SessionEvent.create_with_tokens(
         message=second_llm_response,
         prompt=second_user_prompt,
         completion=second_llm_response,
@@ -118,21 +121,17 @@ def create_session_with_token_tracking():
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    session.add_event(second_llm_event)
-    
-    # Save the session
-    store = SessionStoreProvider.get_store()
-    store.save(session)
+    await session.add_event_and_save(second_llm_event)
     
     return session
 
 
-def create_multi_model_session():
+async def create_multi_model_session():
     """Create a session that uses multiple different models."""
     logger.info("Creating a session with multiple models...")
     
     # Create a new session
-    session = Session()
+    session = await Session.create()
     logger.info(f"Created multi-model session with ID: {session.id}")
     
     # Add events using different models
@@ -152,7 +151,7 @@ def create_multi_model_session():
             source=EventSource.USER,
             type=EventType.MESSAGE
         )
-        session.add_event(user_event)
+        await session.add_event_and_save(user_event)
         
         # LLM response - let's vary the length based on the model
         # to demonstrate different token usage patterns
@@ -160,7 +159,7 @@ def create_multi_model_session():
         llm_response = f"This is a simulated response about {model}. " + "More details would be provided here. " * (6 - i)
         
         # Add LLM event with token usage tracking
-        llm_event = SessionEvent.create_with_tokens(
+        llm_event = await SessionEvent.create_with_tokens(
             message=llm_response,
             prompt=user_message,
             completion=llm_response,
@@ -168,16 +167,12 @@ def create_multi_model_session():
             source=EventSource.LLM,
             type=EventType.MESSAGE
         )
-        session.add_event(llm_event)
-    
-    # Save the session
-    store = SessionStoreProvider.get_store()
-    store.save(session)
+        await session.add_event_and_save(llm_event)
     
     return session
 
 
-def print_token_usage_report(session: Session):
+async def print_token_usage_report(session: Session):
     """Print a detailed token usage report for a session."""
     logger.info(f"\n=== Token Usage Report for Session {session.id} ===")
     logger.info(f"Total tokens used: {session.total_tokens}")
@@ -213,7 +208,7 @@ def print_token_usage_report(session: Session):
             logger.info(f"    Estimated cost: ${event.token_usage.estimated_cost_usd:.6f}")
 
 
-def demonstrate_token_counting():
+async def demonstrate_token_counting():
     """Demonstrate token counting with and without tiktoken."""
     logger.info("\n=== Token Counting Demonstration ===")
     
@@ -235,6 +230,7 @@ def demonstrate_token_counting():
         logger.info(f"Length: {len(text)} characters")
         
         for model in models:
+            # Token counting is CPU-bound, not I/O bound, so we don't need an async version
             token_count = TokenUsage.count_tokens(text, model)
             logger.info(f"  {model}: {token_count} tokens")
     
@@ -246,12 +242,12 @@ def demonstrate_token_counting():
         logger.info("Install tiktoken for more accurate counts: pip install tiktoken")
 
 
-def tracking_conversation_costs():
+async def tracking_conversation_costs():
     """Demonstrate tracking costs throughout a conversation."""
     logger.info("\n=== Tracking Conversation Costs ===")
     
     # Create a new session
-    session = Session()
+    session = await Session.create()
     logger.info(f"Created cost tracking session with ID: {session.id}")
     
     # Define a conversation
@@ -279,7 +275,7 @@ def tracking_conversation_costs():
                 source=EventSource.USER,
                 type=EventType.MESSAGE
             )
-            session.add_event(user_event)
+            await session.add_event_and_save(user_event)
             logger.info(f"Added user message ({len(content)} chars)")
             
         elif role == "assistant":
@@ -291,7 +287,7 @@ def tracking_conversation_costs():
             prompt = conversation[i-1]["content"] if i > 0 else ""
             
             # Create assistant event with token tracking
-            assistant_event = SessionEvent.create_with_tokens(
+            assistant_event = await SessionEvent.create_with_tokens(
                 message=content,
                 prompt=prompt,
                 completion=content,
@@ -299,7 +295,7 @@ def tracking_conversation_costs():
                 source=EventSource.LLM,
                 type=EventType.MESSAGE
             )
-            session.add_event(assistant_event)
+            await session.add_event_and_save(assistant_event)
             
             # Log token usage for this message
             tokens = assistant_event.token_usage.total_tokens
@@ -345,7 +341,7 @@ def tracking_conversation_costs():
     """
     
     # Use GPT-4 for final response
-    final_event = SessionEvent.create_with_tokens(
+    final_event = await SessionEvent.create_with_tokens(
         message=final_response,
         prompt=conversation[-1]["content"],
         completion=final_response,
@@ -353,7 +349,7 @@ def tracking_conversation_costs():
         source=EventSource.LLM,
         type=EventType.MESSAGE
     )
-    session.add_event(final_event)
+    await session.add_event_and_save(final_event)
     
     # Log final token usage
     tokens = final_event.token_usage.total_tokens
@@ -361,40 +357,36 @@ def tracking_conversation_costs():
     logger.info(f"Added final assistant message: {tokens} tokens, ${cost:.6f}")
     logger.info(f"Final total: {session.total_tokens} tokens, ${session.total_cost:.6f}")
     
-    # Save the session
-    store = SessionStoreProvider.get_store()
-    store.save(session)
-    
     return session
 
 
-def main():
+async def main():
     """Main function demonstrating the token tracking functionality."""
-    logger.info("Starting A2A Session Manager Token Tracking example")
+    logger.info("Starting A2A Session Manager Token Tracking example (async version)")
     
     # Setup storage
-    store = setup_storage()
+    store = await setup_storage()
     
     # Check if tiktoken is available
     logger.info(f"Tiktoken available: {TIKTOKEN_AVAILABLE}")
     
     # Create basic session with token tracking
-    session = create_session_with_token_tracking()
-    print_token_usage_report(session)
+    session = await create_session_with_token_tracking()
+    await print_token_usage_report(session)
     
     # Create session with multiple models
-    multi_model_session = create_multi_model_session()
-    print_token_usage_report(multi_model_session)
+    multi_model_session = await create_multi_model_session()
+    await print_token_usage_report(multi_model_session)
     
     # Demonstrate token counting
-    demonstrate_token_counting()
+    await demonstrate_token_counting()
     
     # Demonstrate tracking conversation costs
-    cost_tracking_session = tracking_conversation_costs()
-    print_token_usage_report(cost_tracking_session)
+    cost_tracking_session = await tracking_conversation_costs()
+    await print_token_usage_report(cost_tracking_session)
     
-    logger.info("A2A Session Manager Token Tracking example completed")
+    logger.info("A2A Session Manager Token Tracking example (async version) completed")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
