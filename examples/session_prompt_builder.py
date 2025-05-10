@@ -1,334 +1,265 @@
 #!/usr/bin/env python3
 # examples/session_prompt_builder.py
 """
-Example script demonstrating the use of the Session Prompt Builder with async API.
+Async demo for the Session Prompt Builder.
 
-This example shows how to:
-1. Create and manipulate sessions
-2. Use different prompt building strategies
-3. Generate LLM-ready prompts from sessions
-4. Integrate with a simple LLM client
+Highlights
+----------
+* Creates sessions and events entirely with the async API
+* Shows Minimal / Conversation / Hierarchical / Tool-Focused strategies
+* Demonstrates prompt-length management with truncate_prompt_to_token_limit()
+* Uses a stubbed LLM + tool executor so it runs completely offline
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List
 
-# Import session manager components
-from a2a_session_manager.models.session import Session
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
+# ── A2A imports ─────────────────────────────────────────────────────
 from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.storage import SessionStoreProvider, InMemorySessionStore
+from a2a_session_manager.models.event_type import EventType
+from a2a_session_manager.models.session import Session, SessionEvent
+from a2a_session_manager.storage import SessionStoreProvider
+from a2a_session_manager.storage.providers.memory import InMemorySessionStore
 from a2a_session_manager.session_prompt_builder import (
-    build_prompt_from_session, 
-    PromptStrategy, 
+    build_prompt_from_session,
+    PromptStrategy,
     truncate_prompt_to_token_limit,
-    truncate_prompt_to_token_limit  # Added this import
 )
 
-# Configure logging
+# ── logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
-# Simulated LLM client for demonstration purposes
-async def call_llm(messages: List[Dict[str, Any]], model: str = "gpt-3.5-turbo") -> Dict[str, Any]:
-    """Simulate calling an LLM API."""
-    logger.info(f"Calling LLM with {len(messages)} messages")
-    
-    # In a real implementation, this would make an API call
-    # For demonstration, we'll just return a simulated response
-    prompt_str = "\n".join(f"{msg.get('role')}: {msg.get('content')}" for msg in messages)
-    logger.info(f"Prompt:\n{prompt_str[:500]}...")
-    
-    # Simulate tool call if we detect certain keywords
-    if "weather" in prompt_str.lower():
+# ── stub LLM & tool helpers ─────────────────────────────────────────
+async def fake_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Tiny stand-in for an LLM call that triggers a weather tool
+    whenever the word “weather” appears in the prompt.
+    """
+    prompt_txt = "\n".join(f"{m['role']}: {m.get('content')}" for m in messages)
+    log.info("LLM received %d msgs (%d chars)", len(messages), len(prompt_txt))
+
+    if "weather" in prompt_txt.lower():
         return {
             "role": "assistant",
-            "content": "I'll check the weather for you.",
+            "content": "Let me check the weather for you.",
             "tool_calls": [
                 {
                     "type": "function",
                     "function": {
                         "name": "get_weather",
-                        "arguments": json.dumps({"location": "New York"})
-                    }
+                        "arguments": json.dumps({"location": "New York"}),
+                    },
                 }
-            ]
+            ],
         }
-    
-    # Otherwise, return a normal message
+
     return {
         "role": "assistant",
-        "content": "I'm a simulated LLM response. I would respond to your query here."
+        "content": "This is a stubbed response from the fake LLM.",
     }
 
-# Simulated tool execution
-async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """Simulate executing a tool."""
-    logger.info(f"Executing tool: {tool_name} with arguments: {arguments}")
-    
-    if tool_name == "get_weather":
-        return {
-            "temperature": 72,
-            "condition": "Sunny",
-            "humidity": 45,
-            "location": arguments.get("location", "Unknown")
-        }
-    
-    return {"error": "Unknown tool"}
 
-async def demonstrate_minimal_strategy():
-    """Demonstrate the minimal prompt strategy."""
-    logger.info("\n=== Demonstrating MINIMAL Prompt Strategy ===")
-    
-    # Create a new session using async factory method
-    session = await Session.create()
-    
-    # Add a user message
-    await session.add_event_and_save(SessionEvent(
-        message="What's the weather like in New York?",
-        source=EventSource.USER,
-        type=EventType.MESSAGE
-    ))
-    
-    # Build prompt with minimal strategy
-    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
-    logger.info(f"Minimal prompt with only user message:\n{json.dumps(prompt, indent=2)}")
-    
-    # Call LLM
-    llm_response = await call_llm(prompt)
-    
-    # Add LLM response to session
-    assistant_msg = SessionEvent(
-        message=llm_response,
-        source=EventSource.LLM,
-        type=EventType.MESSAGE
-    )
-    await session.add_event_and_save(assistant_msg)
-    
-    # Execute tool call if present
-    if "tool_calls" in llm_response:
-        for tool_call in llm_response.get("tool_calls", []):
-            if tool_call.get("type") == "function":
-                func = tool_call.get("function", {})
-                tool_name = func.get("name")
-                arguments = json.loads(func.get("arguments", "{}"))
-                
-                # Execute the tool
-                result = await execute_tool(tool_name, arguments)
-                
-                # Add tool result as a child of the assistant message
-                tool_event = SessionEvent(
-                    message={
-                        "tool_name": tool_name,
-                        "arguments": arguments,
-                        "result": result
-                    },
-                    source=EventSource.SYSTEM,
-                    type=EventType.TOOL_CALL,
-                    metadata={"parent_event_id": assistant_msg.id}
-                )
-                await session.add_event_and_save(tool_event)
-    
-    # Build prompt again with the updated session
-    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
-    logger.info(f"Minimal prompt after tool execution:\n{json.dumps(prompt, indent=2)}")
-    
-    return session
+async def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Fake tool execution so the demo stays offline."""
+    log.info("Executing tool %s → %s", name, args)
+    if name == "get_weather":
+        city = args.get("location", "Unknown")
+        return {"temperature": 72, "condition": "Sunny", "location": city}
+    return {"error": "unknown-tool"}
 
-async def demonstrate_conversation_strategy():
-    """Demonstrate the conversation prompt strategy with a multi-turn dialog."""
-    logger.info("\n=== Demonstrating CONVERSATION Prompt Strategy ===")
-    
-    # Create a new session
+
+# ── individual strategy demos ───────────────────────────────────────
+async def demo_minimal() -> None:
+    log.info("\n=== MINIMAL strategy ===")
     session = await Session.create()
-    
-    # Simulate a 3-turn conversation
-    conversation = [
-        {"role": "user", "content": "Tell me about quantum computing."},
-        {"role": "assistant", "content": "Quantum computing uses quantum bits or qubits that can exist in multiple states simultaneously, unlike classical bits."},
-        {"role": "user", "content": "How is that different from classical computing?"},
-        {"role": "assistant", "content": "Classical computing uses bits that are either 0 or 1, while quantum computing uses qubits that can be in a superposition of states."},
-        {"role": "user", "content": "What practical applications does it have?"}
-    ]
-    
-    # Add conversation to session
-    for msg in conversation:
-        event = SessionEvent(
-            message=msg["content"],
-            source=EventSource.USER if msg["role"] == "user" else EventSource.LLM,
-            type=EventType.MESSAGE
+
+    await session.add_event_and_save(
+        SessionEvent(
+            message="What's the weather in New York?",
+            source=EventSource.USER,
+            type=EventType.MESSAGE,
         )
-        await session.add_event_and_save(event)
-    
-    # Build prompt with conversation strategy
-    prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
-    logger.info(f"Conversation prompt:\n{json.dumps(prompt, indent=2)}")
-    
-    return session
+    )
 
-async def demonstrate_hierarchical_strategy():
-    """Demonstrate the hierarchical prompt strategy with parent-child sessions."""
-    logger.info("\n=== Demonstrating HIERARCHICAL Prompt Strategy ===")
-    
-    # Set up storage
+    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
+    log.info("Prompt sent to LLM:\n%s", json.dumps(prompt, indent=2))
+
+    llm_resp = await fake_llm(prompt)
+
+    # add assistant message
+    assistant_evt = SessionEvent(
+        message=llm_resp,
+        source=EventSource.LLM,
+        type=EventType.MESSAGE,
+    )
+    await session.add_event_and_save(assistant_evt)
+
+    # run tool(s) if present
+    for call in llm_resp.get("tool_calls", []):
+        fn = call.get("function", {})
+        result = await execute_tool(fn.get("name"), json.loads(fn.get("arguments", "{}")))
+        await session.add_event_and_save(
+            SessionEvent(
+                message={
+                    "tool_name": fn.get("name"),
+                    "arguments": json.loads(fn.get("arguments", "{}")),
+                    "result": result,
+                },
+                source=EventSource.SYSTEM,
+                type=EventType.TOOL_CALL,
+                metadata={"parent_event_id": assistant_evt.id},
+            )
+        )
+
+    prompt = await build_prompt_from_session(session, PromptStrategy.MINIMAL)
+    log.info("Prompt after tool execution:\n%s", json.dumps(prompt, indent=2))
+
+
+async def demo_conversation() -> None:
+    log.info("\n=== CONVERSATION strategy ===")
+    session = await Session.create()
+
+    convo = [
+        ("user", "Tell me about quantum computing."),
+        ("assistant", "Quantum computers use qubits that can exist in superpositions."),
+        ("user", "How is that different from classical bits?"),
+        ("assistant", "Classical bits are strictly 0 or 1; qubits can be both."),
+        ("user", "What practical applications does it have?"),
+    ]
+    for role, msg in convo:
+        await session.add_event_and_save(
+            SessionEvent(
+                message=msg,
+                source=EventSource.USER if role == "user" else EventSource.LLM,
+                type=EventType.MESSAGE,
+            )
+        )
+
+    prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+    log.info("Conversation prompt:\n%s", json.dumps(prompt, indent=2))
+
+
+async def demo_hierarchical() -> None:
+    log.info("\n=== HIERARCHICAL strategy ===")
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
-    
-    # Create parent session
+
     parent = await Session.create()
-    
-    # Add messages to parent
-    await parent.add_event_and_save(SessionEvent(
-        message="I want to plan a trip to Japan.",
-        source=EventSource.USER,
-        type=EventType.MESSAGE
-    ))
-    
-    await parent.add_event_and_save(SessionEvent(
-        message="Great! Japan is a wonderful destination. What kind of activities are you interested in?",
-        source=EventSource.LLM,
-        type=EventType.MESSAGE
-    ))
-    
-    await parent.add_event_and_save(SessionEvent(
-        message="I'm interested in both historical sites and nature.",
-        source=EventSource.USER,
-        type=EventType.MESSAGE
-    ))
-    
-    # Add a summary to parent
-    await parent.add_event_and_save(SessionEvent(
-        message="User is planning a trip to Japan and is interested in historical sites and nature.",
-        source=EventSource.SYSTEM,
-        type=EventType.SUMMARY
-    ))
-    
-    # Create child session
-    child = await Session.create(parent_id=parent.id)
-    
-    # Add message to child
-    await child.add_event_and_save(SessionEvent(
-        message="Can you suggest an itinerary for 7 days?",
-        source=EventSource.USER,
-        type=EventType.MESSAGE
-    ))
-    
-    # Build prompt with hierarchical strategy
-    prompt = await build_prompt_from_session(
-        child, 
-        PromptStrategy.HIERARCHICAL,
-        include_parent_context=True
-    )
-    logger.info(f"Hierarchical prompt:\n{json.dumps(prompt, indent=2)}")
-    
-    return child
-
-async def demonstrate_tool_focused_strategy():
-    """Demonstrate the tool-focused prompt strategy."""
-    logger.info("\n=== Demonstrating TOOL_FOCUSED Prompt Strategy ===")
-    
-    # Create a session with tool calls
-    session = await Session.create()
-    
-    # Add user message
-    await session.add_event_and_save(SessionEvent(
-        message="What's the weather in New York, Tokyo, and London?",
-        source=EventSource.USER,
-        type=EventType.MESSAGE
-    ))
-    
-    # Add assistant message
-    assistant_msg = SessionEvent(
-        message="I'll check the weather for these cities.",
-        source=EventSource.LLM,
-        type=EventType.MESSAGE
-    )
-    await session.add_event_and_save(assistant_msg)
-    
-    # Add multiple tool calls
-    cities = ["New York", "Tokyo", "London"]
-    weather = [
-        {"temperature": 72, "condition": "Sunny"},
-        {"temperature": 68, "condition": "Rainy"},
-        {"temperature": 60, "condition": "Cloudy"}
-    ]
-    
-    for i, city in enumerate(cities):
-        tool_event = SessionEvent(
-            message={
-                "tool_name": "get_weather",
-                "arguments": {"location": city},
-                "result": weather[i]
-            },
-            source=EventSource.SYSTEM,
-            type=EventType.TOOL_CALL,
-            metadata={"parent_event_id": assistant_msg.id}
-        )
-        await session.add_event_and_save(tool_event)
-    
-    # Build prompt with tool-focused strategy
-    prompt = await build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
-    logger.info(f"Tool-focused prompt:\n{json.dumps(prompt, indent=2)}")
-    
-    return session
-
-async def demonstrate_token_management():
-    """Demonstrate prompt truncation to manage token limits."""
-    logger.info("\n=== Demonstrating Token Management ===")
-    
-    # Create a session with many messages
-    session = await Session.create()
-    
-    # Add a long conversation
-    for i in range(20):
-        # Add user message
-        await session.add_event_and_save(SessionEvent(
-            message=f"This is user message #{i+1}. It contains some text to increase token count.",
+    await parent.add_event_and_save(
+        SessionEvent(
+            message="Planning a trip to Japan.",
             source=EventSource.USER,
-            type=EventType.MESSAGE
-        ))
-        
-        # Add assistant message
-        await session.add_event_and_save(SessionEvent(
-            message=f"This is assistant response #{i+1}. It also contains extra text to make the prompt longer.",
-            source=EventSource.LLM,
-            type=EventType.MESSAGE
-        ))
-    
-    # Build prompt with conversation strategy and token limit
-    
-    # First get the full prompt
-    full_prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
-    logger.info(f"Full prompt length: {len(full_prompt)} messages")
-    
-    # Then truncate it
-    truncated_prompt = await truncate_prompt_to_token_limit(full_prompt, max_tokens=500)
-    logger.info(f"Truncated prompt length: {len(truncated_prompt)} messages")
-    
-    # Show the difference
-    logger.info(f"Truncated prompt preview:\n{json.dumps(truncated_prompt[:5], indent=2)}")
-    
-    return session
+            type=EventType.MESSAGE,
+        )
+    )
+    await parent.add_event_and_save(
+        SessionEvent(
+            message="User wants historical sites and nature.",
+            source=EventSource.SYSTEM,
+            type=EventType.SUMMARY,
+        )
+    )
+    child = await Session.create(parent_id=parent.id)
+    await child.add_event_and_save(
+        SessionEvent(
+            message="Can you suggest a 7-day itinerary?",
+            source=EventSource.USER,
+            type=EventType.MESSAGE,
+        )
+    )
 
-async def main():
-    """Run all demonstrations."""
-    logger.info("Starting Session Prompt Builder demonstrations")
-    
-    # Demonstrate different strategies
-    await demonstrate_minimal_strategy()
-    await demonstrate_conversation_strategy()
-    await demonstrate_hierarchical_strategy()
-    await demonstrate_tool_focused_strategy()
-    await demonstrate_token_management()
-    
-    logger.info("All demonstrations completed")
+    prompt = await build_prompt_from_session(
+        child,
+        PromptStrategy.HIERARCHICAL,
+        include_parent_context=True,
+    )
+    log.info("Hierarchical prompt (with parent context):\n%s", json.dumps(prompt, indent=2))
+
+
+async def demo_tool_focused() -> None:
+    log.info("\n=== TOOL_FOCUSED strategy ===")
+    session = await Session.create()
+    await session.add_event_and_save(
+        SessionEvent(
+            message="Weather in New York, Tokyo and London?",
+            source=EventSource.USER,
+            type=EventType.MESSAGE,
+        )
+    )
+    assistant_evt = SessionEvent(
+        message="I'll check the weather.",
+        source=EventSource.LLM,
+        type=EventType.MESSAGE,
+    )
+    await session.add_event_and_save(assistant_evt)
+
+    for city, cond in (("New York", "Sunny"), ("Tokyo", "Rainy"), ("London", "Cloudy")):
+        await session.add_event_and_save(
+            SessionEvent(
+                message={
+                    "tool_name": "get_weather",
+                    "arguments": {"location": city},
+                    "result": {"condition": cond, "temperature": 70},
+                },
+                source=EventSource.SYSTEM,
+                type=EventType.TOOL_CALL,
+                metadata={"parent_event_id": assistant_evt.id},
+            )
+        )
+
+    prompt = await build_prompt_from_session(session, PromptStrategy.TOOL_FOCUSED)
+    log.info("Tool-focused prompt:\n%s", json.dumps(prompt, indent=2))
+
+
+async def demo_token_truncation() -> None:
+    log.info("\n=== token-limit truncation demo ===")
+    session = await Session.create()
+    # make a long chat
+    for i in range(25):
+        await session.add_event_and_save(
+            SessionEvent(
+                message=f"User message {i+1} … Lorem ipsum dolor sit amet.",
+                source=EventSource.USER,
+                type=EventType.MESSAGE,
+            )
+        )
+        await session.add_event_and_save(
+            SessionEvent(
+                message=f"Assistant response {i+1} … Dolor sit amet lorem ipsum.",
+                source=EventSource.LLM,
+                type=EventType.MESSAGE,
+            )
+        )
+
+    full_prompt = await build_prompt_from_session(session, PromptStrategy.CONVERSATION)
+    log.info("Full prompt has %d messages", len(full_prompt))
+
+    truncated = await truncate_prompt_to_token_limit(full_prompt, max_tokens=500)
+    log.info("After truncate_prompt_to_token_limit → %d messages", len(truncated))
+    log.info("First 3 truncated messages:\n%s", json.dumps(truncated[:3], indent=2))
+
+
+# ── main orchestration ───────────────────────────────────────────────
+async def main() -> None:
+    log.info("Setting up in-memory store")
+    SessionStoreProvider.set_store(InMemorySessionStore())
+
+    await demo_minimal()
+    await demo_conversation()
+    await demo_hierarchical()
+    await demo_tool_focused()
+    await demo_token_truncation()
+
+    log.info("All prompt-builder demos complete")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

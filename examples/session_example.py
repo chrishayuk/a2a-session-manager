@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 # examples/session_example.py
+#!/usr/bin/env python3
+# examples/session_example.py
 """
-session_example.py
-~~~~~~~~~~~~~~~~~~~~~~~
+Async Session-manager demo
 
-Demonstrates the async API of A2A Session Manager:
-
-* initialize an in-memory async store
-* create a simple session with events
-* build a parent → child → grand-child hierarchy 
-* traverse ancestors / descendants asynchronously
-* pretty-print a summary of sessions
-
-Run:
-```bash
-uv run examples/async_session_example.py
-```
+• in-memory store
+• simple session with events
+• parent → children → grand-child hierarchy
+• runs + run-level events
+• prompt-builder showcase
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -28,233 +24,164 @@ from a2a_session_manager.models.session import Session, SessionEvent
 from a2a_session_manager.models.session_run import SessionRun
 from a2a_session_manager.storage import SessionStoreProvider
 from a2a_session_manager.storage.providers.memory import InMemorySessionStore
-from a2a_session_manager.session_prompt_builder import build_prompt_from_session, PromptStrategy
+from a2a_session_manager.session_prompt_builder import (
+    build_prompt_from_session,
+    PromptStrategy,
+)
 
-# Configure logging
+# ─────────────────────────── logging ────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-# Helper functions
-async def describe_session(session: Session):
-    """Print a description of a session."""
-    log.info("\n=== Session %s ===", session.id)
-    log.info("events=%d | runs=%d | children=%d", len(session.events), len(session.runs), len(session.child_ids))
-    
-    for evt in session.events:
+# ─────────────────────────── helpers ────────────────────────────────
+async def describe_session(sess: Session) -> None:
+    log.info("\n=== Session %s ===", sess.id)
+    log.info("events=%d | runs=%d | children=%d", len(sess.events), len(sess.runs), len(sess.child_ids))
+
+    for evt in sess.events:
         log.info("  [%s/%s] %s", evt.source.value, evt.type.value, str(evt.message)[:60])
-    
-    for run in session.runs:
+
+    for run in sess.runs:
         log.info("  run %s ⇒ %s", run.id, run.status.value)
-    
-    # Show ancestors if any
-    ancestors = await session.ancestors()
-    if ancestors:
-        log.info("  ancestors: %s", [a.id for a in ancestors])
-    
-    # Show descendants if any
-    descendants = await session.descendants()
-    if descendants:
-        log.info("  descendants: %s", [d.id for d in descendants])
 
+    if (anc := await sess.ancestors()):
+        log.info("  ancestors: %s", [a.id for a in anc])
+    if (desc := await sess.descendants()):
+        log.info("  descendants: %s", [d.id for d in desc])
 
-async def main():
-    """Main example demonstrating async session operations."""
-    log.info("Starting A2A Session Manager async example")
-    
-    # 1. Initialize the async in-memory store
+# ─────────────────────────── main demo ──────────────────────────────
+async def main() -> None:
+    log.info("Bootstrapping in-memory store")
     store = InMemorySessionStore()
     SessionStoreProvider.set_store(store)
-    log.info("Initialized async in-memory session store")
-    
-    # 2. Create a simple session with messages
-    log.info("\n=== Creating a simple session ===")
-    
-    # Create using the async factory method
+
+    # 1. simple session ------------------------------------------------
     simple = await Session.create()
-    
-    # Add events
-    simple.add_event(SessionEvent(
-        message="Hello! I have a question about quantum computing.", 
-        source=EventSource.USER
+    await simple.add_event_and_save(SessionEvent(
+        message="Hello! I have a question about quantum computing.",
+        source=EventSource.USER,
     ))
-    
-    simple.add_event(SessionEvent(
-        message="I'd be happy to help with your quantum computing question. What would you like to know?", 
-        source=EventSource.LLM
+    await simple.add_event_and_save(SessionEvent(
+        message="Sure – what would you like to know?",
+        source=EventSource.LLM,
     ))
-    
-    simple.add_event(SessionEvent(
-        message="Can you explain quantum entanglement in simple terms?", 
-        source=EventSource.USER
+    await simple.add_event_and_save(SessionEvent(
+        message="Can you explain entanglement in simple terms?",
+        source=EventSource.USER,
     ))
-    
-    # Add a summary event
-    simple.add_event(SessionEvent(
-        message="The user asked about quantum computing and specifically quantum entanglement.", 
-        source=EventSource.LLM, 
-        type=EventType.SUMMARY
+    await simple.add_event_and_save(SessionEvent(
+        message="User asked about quantum computing & entanglement.",
+        source=EventSource.LLM,
+        type=EventType.SUMMARY,
     ))
-    
-    # Save asynchronously
-    await store.save(simple)
-    
-    # Show the session details
     await describe_session(simple)
-    
-    # 3. Create a session hierarchy (parent → child → grandchild)
-    log.info("\n=== Creating a session hierarchy ===")
-    
-    # Create parent session
+
+    # 2. hierarchy -----------------------------------------------------
+    log.info("\n=== Building hierarchy ===")
+
     parent = await Session.create()
-    parent.add_event(SessionEvent(
+    await parent.add_event_and_save(SessionEvent(
         message="Let's discuss AI capabilities.",
-        source=EventSource.USER
+        source=EventSource.USER,
     ))
-    await store.save(parent)
-    log.info(f"Created parent session: {parent.id}")
-    
-    # Create first child session
+
     child_a = await Session.create(parent_id=parent.id)
-    child_a.add_event(SessionEvent(
+    await child_a.add_event_and_save(SessionEvent(
         message="Tell me about language models.",
-        source=EventSource.USER
+        source=EventSource.USER,
     ))
-    await store.save(child_a)
-    log.info(f"Created child session A: {child_a.id}")
-    
-    # Create second child session
+
     child_b = await Session.create(parent_id=parent.id)
-    child_b.add_event(SessionEvent(
+    await child_b.add_event_and_save(SessionEvent(
         message="Tell me about computer vision.",
-        source=EventSource.USER
+        source=EventSource.USER,
     ))
-    await store.save(child_b)
-    log.info(f"Created child session B: {child_b.id}")
-    
-    # Create grandchild session
-    grandchild = await Session.create(parent_id=child_a.id)
-    grandchild.add_event(SessionEvent(
-        message="How do transformer models work?",
-        source=EventSource.USER
+
+    grand = await Session.create(parent_id=child_a.id)
+    await grand.add_event_and_save(SessionEvent(
+        message="How do transformers work?",
+        source=EventSource.USER,
     ))
-    await store.save(grandchild)
-    log.info(f"Created grandchild session: {grandchild.id}")
-    
-    # Navigate hierarchy
-    log.info("\nNavigating hierarchy:")
-    
-    # Get ancestors of grandchild
-    grandchild_ancestors = await grandchild.ancestors()
-    log.info(f"Grandchild ancestors: {[a.id for a in grandchild_ancestors]}")
-    
-    # Get descendants of parent
-    parent_descendants = await parent.descendants()
-    log.info(f"Parent descendants: {[d.id for d in parent_descendants]}")
-    
-    # 4. Create a session with runs
-    log.info("\n=== Creating a session with runs ===")
-    
-    # Create session
-    run_session = await Session.create()
-    run_session.add_event(SessionEvent(
-        message="Can you analyze this data for me?",
-        source=EventSource.USER
+
+    log.info("grand-child ancestors:   %s", [a.id for a in await grand.ancestors()])
+    log.info("parent     descendants: %s", [d.id for d in await parent.descendants()])
+
+    # 3. runs demo -----------------------------------------------------
+    log.info("\n=== Session with runs ===")
+    run_sess = await Session.create()
+    await run_sess.add_event_and_save(SessionEvent(
+        message="Analyse this data for me.",
+        source=EventSource.USER,
     ))
-    
-    # Create three runs with different states
-    run1 = SessionRun()
-    run1.mark_running()
-    run1.mark_completed()
-    
-    run2 = SessionRun()
-    run2.mark_running()
-    run2.mark_failed()
-    
-    run3 = SessionRun()
-    run3.mark_running()
-    
-    # Add runs to session
-    run_session.runs.extend([run1, run2, run3])
-    
-    # Add events associated with runs
-    run_session.add_event(SessionEvent(
-        message="Processing first dataset",
+
+    # create runs
+    run1, run2, run3 = SessionRun(), SessionRun(), SessionRun()
+    await run1.mark_running(); await run1.mark_completed()
+    await run2.mark_running(); await run2.mark_failed()
+    await run3.mark_running()
+
+    run_sess.runs.extend([run1, run2, run3])
+
+    # run-specific events
+    await run_sess.add_event_and_save(SessionEvent(
+        message="Processing dataset 1",
         source=EventSource.SYSTEM,
-        task_id=run1.id
+        task_id=run1.id,
     ))
-    
-    run_session.add_event(SessionEvent(
-        message="Error processing second dataset",
+    await run_sess.add_event_and_save(SessionEvent(
+        message="Error on dataset 2",
         source=EventSource.SYSTEM,
-        task_id=run2.id
+        task_id=run2.id,
     ))
-    
-    run_session.add_event(SessionEvent(
-        message="Currently processing third dataset",
+    await run_sess.add_event_and_save(SessionEvent(
+        message="Dataset 3 in progress",
         source=EventSource.SYSTEM,
-        task_id=run3.id
+        task_id=run3.id,
     ))
-    
-    # Save the session
-    await store.save(run_session)
-    
-    # Describe the session with runs
-    await describe_session(run_session)
-    
-    # 5. Build prompts from a session
-    log.info("\n=== Building LLM prompts from sessions ===")
-    
-    # Create a session with a tool call
-    tool_session = await Session.create()
-    
-    # Add a conversation with tool usage
-    tool_session.add_event(SessionEvent(
+    await describe_session(run_sess)
+
+    # 4. prompt-builder demo ------------------------------------------
+    log.info("\n=== Prompt-builder demo ===")
+    tool_sess = await Session.create()
+    await tool_sess.add_event_and_save(SessionEvent(
         message="What's the weather in New York?",
-        source=EventSource.USER
+        source=EventSource.USER,
     ))
-    
-    assistant_msg = SessionEvent(
-        message="I'll check the weather for you.",
-        source=EventSource.LLM
+
+    assistant_evt = SessionEvent(
+        message="I'll check that for you.",
+        source=EventSource.LLM,
     )
-    tool_session.add_event(assistant_msg)
-    
-    # Add a tool call as a child of the assistant message
-    tool_session.add_event(SessionEvent(
+    await tool_sess.add_event_and_save(assistant_evt)
+
+    await tool_sess.add_event_and_save(SessionEvent(
         message={
             "tool_name": "get_weather",
-            "result": {"temperature": 72, "condition": "Sunny", "location": "New York"}
+            "result": {"temperature": 72, "condition": "Sunny", "location": "New York"},
         },
         source=EventSource.SYSTEM,
         type=EventType.TOOL_CALL,
-        metadata={"parent_event_id": assistant_msg.id}
+        metadata={"parent_event_id": assistant_evt.id},
     ))
-    
-    await store.save(tool_session)
-    
-    # Build prompts using different strategies
-    log.info("\nPrompt with MINIMAL strategy:")
-    minimal_prompt = await build_prompt_from_session(tool_session, PromptStrategy.MINIMAL)
-    for msg in minimal_prompt:
-        log.info(f"  {msg['role']}: {msg.get('content')}")
-    
-    log.info("\nPrompt with TOOL_FOCUSED strategy:")
-    tool_prompt = await build_prompt_from_session(tool_session, PromptStrategy.TOOL_FOCUSED)
-    for msg in tool_prompt:
-        if msg.get('role') == 'tool':
-            log.info(f"  {msg['role']} ({msg.get('name')}): {msg.get('content')}")
-        else:
-            log.info(f"  {msg['role']}: {msg.get('content')}")
-    
-    # 6. List all sessions
-    log.info("\n=== Listing all sessions ===")
-    session_ids = await store.list_sessions()
-    log.info(f"Found {len(session_ids)} sessions in the store:")
-    for sid in session_ids:
-        log.info(f"  • {sid}")
-    
-    log.info("\nAsync Session Manager example completed")
 
+    minimal = await build_prompt_from_session(tool_sess, PromptStrategy.MINIMAL)
+    focused = await build_prompt_from_session(tool_sess, PromptStrategy.TOOL_FOCUSED)
 
+    log.info("\nMINIMAL strategy:\n%s", json_pretty(minimal))
+    log.info("\nTOOL_FOCUSED strategy:\n%s", json_pretty(focused))
+
+    # 5. list sessions -------------------------------------------------
+    log.info("\n=== Store contents ===")
+    for sid in await store.list_sessions():
+        log.info("  • %s", sid)
+
+    log.info("\nAll done – async demo complete ✅")
+
+# tiny pretty-printer so we don’t need to import `json`
+def json_pretty(obj):  # noqa: D401
+    import json
+    return json.dumps(obj, indent=2, ensure_ascii=False)
+
+# ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     asyncio.run(main())

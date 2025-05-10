@@ -1,19 +1,13 @@
 # a2a_session_manager/session_aware_tool_processor.py
 #!/usr/bin/env python3
-#!/usr/bin/env python3
-"""Session‑aware tool processor — compatible with `chuk_tool_processor` 0.1.x.
+"""Session-aware Tool-processor for chuk_tool_processor 0.1.x.
 
-This flavour relies on the public objects that *do* exist in the latest
-0.1.6 release:
+* Converts OpenAI `tool_calls` → `ToolCall` objects.
+* Executes them with **ToolProcessor().executor.execute**.
+* Adds caching / retry.
+* Logs every call into the A2A session tree, storing the **string-repr**
+  of the result (this is what the prompt-builder currently expects)."""
 
-•   we convert OpenAI‑style `tool_calls` into `ToolCall` objects;
-•   we feed them straight to **`ToolProcessor().executor.execute()`**;
-•   we keep simple caching / retry and full event logging into the A2A
-    Session tree.
-
-If the import surface changes again, update **here** (single source of
-truth) rather than sprinkling fall‑backs.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -35,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 class SessionAwareToolProcessor:
-    """Run tool‑calls, add retry/caching, and log into a session."""
+    """Run tool-calls, add retry/caching, and log into a session."""
 
+    # ─────────────────────────── construction ──────────────────────────
     def __init__(
         self,
         session_id: str,
@@ -45,17 +40,16 @@ class SessionAwareToolProcessor:
         max_retries: int = 2,
         retry_delay: float = 1.0,
     ) -> None:
-        self.session_id = session_id
+        self.session_id     = session_id
         self.enable_caching = enable_caching
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.cache: Dict[str, Any] = {}
+        self.max_retries    = max_retries
+        self.retry_delay    = retry_delay
+        self.cache: Dict[str, ToolResult] = {}
 
-        self._tp = ToolProcessor()  # 0.1.x exposes `.executor.execute()`
+        self._tp = ToolProcessor()
         if not hasattr(self._tp, "executor"):
-            raise AttributeError("Out‑of‑date chuk_tool_processor — missing executor")
+            raise AttributeError("Installed chuk_tool_processor is too old – missing `.executor`")
 
-    # ------------------------------------------------------------------ #
     @classmethod
     async def create(cls, session_id: str, **kwargs):
         store = SessionStoreProvider.get_store()
@@ -63,25 +57,25 @@ class SessionAwareToolProcessor:
             raise ValueError(f"Session {session_id} not found")
         return cls(session_id=session_id, **kwargs)
 
-    # ------------------------------------------------------------------ #
-    async def _await(self, val: Any) -> Any:
+    # ─────────────────────────── internals ─────────────────────────────
+    async def _maybe_await(self, val: Any) -> Any:
         return await val if asyncio.iscoroutine(val) else val
 
-    async def _run_calls(self, calls: List[Dict[str, Any]]) -> List[ToolResult]:
-        """Build `ToolCall` objects and drive the executor synchronously."""
-        tcalls: List[ToolCall] = []
+    async def _exec_calls(self, calls: List[Dict[str, Any]]) -> List[ToolResult]:
+        """Convert dicts → ToolCall and drive the executor."""
+        tool_calls: list[ToolCall] = []
         for c in calls:
-            fn = c.get("function", {})
+            fn   = c.get("function", {})
             name = fn.get("name", "tool")
             try:
                 args = json.loads(fn.get("arguments", "{}"))
             except json.JSONDecodeError:
                 args = {"raw": fn.get("arguments")}
-            tcalls.append(ToolCall(tool=name, arguments=args))
+            tool_calls.append(ToolCall(tool=name, arguments=args))
 
-        results = await self._tp.executor.execute(tcalls)
+        results = await self._tp.executor.execute(tool_calls)
         for r in results:
-            r.result = await self._await(r.result)
+            r.result = await self._maybe_await(r.result)
         return results
 
     async def _log_event(
@@ -94,16 +88,19 @@ class SessionAwareToolProcessor:
         cached: bool,
         failed: bool = False,
     ) -> None:
+        """Persist TOOL_CALL with *string* result (prompt-friendly)."""
+        result_str = str(res.result) if res.result is not None else "null"
+
         ev = await SessionEvent.create_with_tokens(
             message={
-                "tool": res.tool,
+                "tool":      res.tool,
                 "arguments": getattr(res, "arguments", None),
-                "result": res.result,
-                "error": res.error,
-                "cached": cached,
+                "result":    result_str,
+                "error":     res.error,
+                "cached":    cached,
             },
             prompt=f"{res.tool}({json.dumps(getattr(res, 'arguments', None), default=str)})",
-            completion=json.dumps(res.result, default=str) if res.result is not None else "",
+            completion=result_str,
             model="tool-execution",
             source=EventSource.SYSTEM,
             type=EventType.TOOL_CALL,
@@ -115,9 +112,9 @@ class SessionAwareToolProcessor:
             await ev.update_metadata("failed", True)
         await session.add_event_and_save(ev)
 
-    # ------------------------------------------------------------------ #
+    # ─────────────────────────── public API ────────────────────────────
     async def process_llm_message(self, llm_msg: Dict[str, Any], _) -> List[ToolResult]:
-        store = SessionStoreProvider.get_store()
+        store   = SessionStoreProvider.get_store()
         session = await store.get(self.session_id)
         if not session:
             raise ValueError(f"Session {self.session_id} not found")
@@ -125,7 +122,7 @@ class SessionAwareToolProcessor:
         parent_evt = await SessionEvent.create_with_tokens(
             message=llm_msg,
             prompt="",
-            completion=json.dumps(llm_msg),
+            completion=json.dumps(llm_msg, ensure_ascii=False),
             model="gpt-4o-mini",
             source=EventSource.LLM,
             type=EventType.MESSAGE,
@@ -136,9 +133,9 @@ class SessionAwareToolProcessor:
         if not calls:
             return []
 
-        out: List[ToolResult] = []
+        out: list[ToolResult] = []
         for call in calls:
-            fn = call.get("function", {})
+            fn   = call.get("function", {})
             name = fn.get("name", "tool")
             try:
                 args = json.loads(fn.get("arguments", "{}"))
@@ -150,16 +147,17 @@ class SessionAwareToolProcessor:
                 if self.enable_caching else None
             )
 
-            if cache_key and cache_key in self.cache:
-                cached: ToolResult = self.cache[cache_key]
+            # 1) cache hit --------------------------------------------------
+            if cache_key and (cached := self.cache.get(cache_key)):
                 await self._log_event(session, parent_evt.id, cached, 1, cached=True)
                 out.append(cached)
                 continue
 
+            # 2) execute with retry ----------------------------------------
             last_err: str | None = None
             for attempt in range(1, self.max_retries + 2):
                 try:
-                    res = (await self._run_calls([call]))[0]
+                    res = (await self._exec_calls([call]))[0]
                     if cache_key:
                         self.cache[cache_key] = res
                     await self._log_event(session, parent_evt.id, res, attempt, cached=False)
@@ -170,8 +168,11 @@ class SessionAwareToolProcessor:
                     if attempt <= self.max_retries:
                         await asyncio.sleep(self.retry_delay)
                         continue
-                    err_res = ToolResult(tool=name, result=None, error=last_err)
-                    await self._log_event(session, parent_evt.id, err_res, attempt, cached=False, failed=True)
+                    err_res = ToolResult(tool=name, result=None, error=last_err)  # type: ignore[arg-type]
+                    await self._log_event(
+                        session, parent_evt.id, err_res, attempt,
+                        cached=False, failed=True
+                    )
                     out.append(err_res)
 
         return out
