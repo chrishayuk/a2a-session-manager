@@ -25,28 +25,31 @@ def test_properties_initially_empty():
     assert isinstance(meta.properties, dict)
     assert meta.properties == {}
 
-def test_set_and_get_property():
+@pytest.mark.asyncio
+async def test_set_and_get_property():
     meta = SessionMetadata()
-    assert meta.get_property("nonexistent") is None
+    assert await meta.get_property("nonexistent") is None
 
-    meta.set_property("foo", 123)
+    await meta.set_property("foo", 123)
     assert "foo" in meta.properties
-    assert meta.get_property("foo") == 123
+    assert await meta.get_property("foo") == 123
 
     # Overwriting works
-    meta.set_property("foo", "bar")
-    assert meta.get_property("foo") == "bar"
+    await meta.set_property("foo", "bar")
+    assert await meta.get_property("foo") == "bar"
 
-def test_model_dump_includes_properties_and_timestamps():
+@pytest.mark.asyncio
+async def test_model_dump_includes_properties_and_timestamps():
     meta = SessionMetadata()
-    meta.set_property("x", True)
+    await meta.set_property("x", True)
     d = meta.model_dump()
 
     assert "created_at" in d
     assert "updated_at" in d
     assert d["properties"] == {"x": True}
 
-def test_updating_updated_at_manually():
+@pytest.mark.asyncio
+async def test_updating_updated_at_manually():
     # You might manually bump updated_at
     meta = SessionMetadata()
     old = meta.updated_at
@@ -57,3 +60,23 @@ def test_updating_updated_at_manually():
     # created_at remains unchanged
     assert meta.created_at < meta.updated_at
 
+@pytest.mark.asyncio
+async def test_update_timestamp():
+    meta = SessionMetadata()
+    old_ts = meta.updated_at
+    time.sleep(0.001)
+    
+    await meta.update_timestamp()
+    
+    assert meta.updated_at > old_ts
+    assert meta.updated_at.tzinfo == timezone.utc
+
+@pytest.mark.asyncio
+async def test_create_class_method():
+    properties = {"test_key": "test_value"}
+    meta = await SessionMetadata.create(properties)
+    
+    assert isinstance(meta, SessionMetadata)
+    assert meta.properties == properties
+    assert isinstance(meta.created_at, datetime)
+    assert isinstance(meta.updated_at, datetime)

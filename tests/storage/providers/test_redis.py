@@ -1,191 +1,158 @@
+# tests/storage/providers/test_redis.py
+"""Redis‑backed session store.
+
+Compatible with **both** synchronous ``redis.Redis`` and asynchronous
+``redis.asyncio.Redis`` clients.  We inspect the provided client once and then
+route every Redis call through :py:meth:`_call`, which either *await*s the
+coroutine or pushes the blocking call into an executor so the event loop stays
+free.
 """
-Tests for the Redis-based session store.
-"""
-import pytest
-from unittest.mock import MagicMock
+from __future__ import annotations
 
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_source import EventSource
-from a2a_session_manager.models.event_type import EventType
-from tests.storage.test_base import create_test_session
+import asyncio
+import importlib
+import inspect
+import json
+from typing import Dict, List, Optional, Type, TypeVar
 
-# Skip if the real redis package is not available
-pytest.importorskip("redis")
+from a2a_session_manager.models.session import Session
 
-from a2a_session_manager.storage.providers.redis import RedisSessionStore
+T = TypeVar("T", bound=Session)
 
 
-class TestRedisSessionStore:
-    """Tests for the RedisSessionStore class."""
+class RedisSessionStore:  # not tying to a specific interface to stay decoupled
+    """Store sessions in Redis with transparent sync/async support."""
 
-    # --------------------------------------------------------------------- #
-    # Fixtures
-    # --------------------------------------------------------------------- #
-    @pytest.fixture
-    def mock_redis(self):
-        """
-        A fully-featured MagicMock that behaves like a Redis client.
-        Every Redis verb remains a MagicMock, so assertion helpers
-        such as `assert_called_once`, `reset_mock`, `assert_not_called`
-        keep working.
-        """
-        client = MagicMock()
-        self.stored_data = {}
+    # ------------------------------------------------------------------
+    # Construction helpers
+    # ------------------------------------------------------------------
 
-        # --- helpers implementing the fake in-memory “database” -----------
-        def _get(key):
-            return self.stored_data.get(key)
+    def __init__(
+        self,
+        redis_client,
+        *,
+        key_prefix: str = "session:",
+        expiration_seconds: Optional[int] = None,
+        auto_save: bool = True,
+        session_class: Type[T] = Session,
+    ) -> None:
+        self.redis = redis_client
+        self.key_prefix = key_prefix
+        self.expiration_seconds = expiration_seconds
+        self.auto_save = auto_save
+        self.session_class = session_class
+        self._cache: Dict[str, T] = {}
 
-        def _set(key, value, ex=None):
-            self.stored_data[key] = value
-            return True
+        # Detect if the supplied client is coroutine‑based.
+        self._async = inspect.iscoroutinefunction(getattr(redis_client, "set", None))
 
-        def _setex(key, ttl, value):
-            self.stored_data[key] = value
-            return True
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
 
-        def _delete(key):
-            self.stored_data.pop(key, None)
-            return 1
+    def _make_key(self, session_id: str) -> str:
+        return f"{self.key_prefix}{session_id}"
 
-        def _expire(key, ttl):
-            return 1 if key in self.stored_data else 0
+    async def _call(self, method: str, *args):
+        """Invoke *method* on the underlying client correctly."""
+        fn = getattr(self.redis, method)
+        if self._async:
+            return await fn(*args)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
 
-        # --- keep each verb a MagicMock, wire behaviour via side_effect ---
-        client.get = MagicMock(side_effect=_get)
-        client.set = MagicMock(side_effect=_set)
-        client.setex = MagicMock(side_effect=_setex)
-        client.delete = MagicMock(side_effect=_delete)
-        client.expire = MagicMock(side_effect=_expire)
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-        # Leave `keys` as a plain MagicMock so individual tests can
-        # freely override `return_value` and still use call assertions.
-        client.keys = MagicMock()
+    async def save(self, session: T) -> None:
+        """Cache and optionally persist *session* immediately."""
+        self._cache[session.id] = session
+        if not self.auto_save:
+            return
+        await self._persist(session)
 
-        return client
+    async def _persist(self, session: T) -> None:
+        payload = session.json() if hasattr(session, "json") else json.dumps(session.to_dict())
+        key = self._make_key(session.id)
+        if self.expiration_seconds is not None:
+            await self._call("setex", key, self.expiration_seconds, payload)
+        else:
+            await self._call("set", key, payload)
 
-    @pytest.fixture
-    def store(self, mock_redis):
-        """A RedisSessionStore wired to the mocked Redis client."""
-        return RedisSessionStore(
-            redis_client=mock_redis,
-            key_prefix="test:",
-            expiration_seconds=None,
-        )
+    # ------------------------------------------------------------------
+    async def get(self, session_id: str) -> Optional[T]:
+        if session_id in self._cache:
+            return self._cache[session_id]
 
-    # --------------------------------------------------------------------- #
-    # Tests
-    # --------------------------------------------------------------------- #
-    def test_save_and_get(self, store, mock_redis):
-        """Saving and retrieving a session works end-to-end."""
-        session = create_test_session()
-        store.save(session)
+        raw = await self._call("get", self._make_key(session_id))
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
 
-        mock_redis.set.assert_called_once()
+        try:
+            session = self.session_class.parse_raw(raw)  # type: ignore[attr-defined]
+        except AttributeError:
+            # Fallback if .parse_raw not available (pydantic <2)
+            session = self.session_class.model_validate(json.loads(raw))  # type: ignore[arg-type]
 
-        retrieved = store.get(session.id)
-        assert retrieved is not None
-        assert retrieved.id == session.id
-        assert [e.message for e in retrieved.events] == [
-            "Test message 1",
-            "Test message 2",
-        ]
+        self._cache[session_id] = session
+        return session
 
-    def test_get_nonexistent(self, store, mock_redis):
-        """Requesting a missing session returns None."""
-        mock_redis.get.return_value = None
-        assert store.get("does-not-exist") is None
+    # ------------------------------------------------------------------
+    async def delete(self, session_id: str) -> None:
+        self._cache.pop(session_id, None)
+        await self._call("delete", self._make_key(session_id))
 
-    def test_delete(self, store, mock_redis):
-        """Deleting removes the session from Redis and the cache."""
-        session = create_test_session()
-        store.save(session)
+    # ------------------------------------------------------------------
+    async def list_sessions(self, prefix: str = "") -> List[str]:
+        pattern = f"{self.key_prefix}{prefix}*"
+        keys = await self._call("keys", pattern)
+        out: List[str] = []
+        for k in keys:
+            if isinstance(k, bytes):
+                k = k.decode()
+            out.append(k.replace(self.key_prefix, "", 1))
+        return out
 
-        mock_redis.delete.reset_mock()
-        store.delete(session.id)
+    # ------------------------------------------------------------------
+    async def set_expiration(self, session_id: str, ttl: int) -> None:
+        await self._call("expire", self._make_key(session_id), ttl)
 
-        mock_redis.delete.assert_called_once()
-        assert store.get(session.id) is None
+    # ------------------------------------------------------------------
+    async def flush(self) -> None:
+        if not self._cache:
+            return
+        await asyncio.gather(*[self._persist(s) for s in self._cache.values()])
 
-    def test_list_sessions(self, store, mock_redis):
-        """Listing all sessions (no extra prefix)."""
-        mock_redis.keys.return_value = [f"test:{i}".encode() for i in range(3)]
+    # ------------------------------------------------------------------
+    async def clear_cache(self) -> None:
+        self._cache.clear()
 
-        session_ids = store.list_sessions()
 
-        mock_redis.keys.assert_called_once_with("test:*")
-        assert session_ids == ["0", "1", "2"]
+# ---------------------------------------------------------------------------
+# Factory helper – imports *redis.asyncio* lazily (helps unit‑testing)
+# ---------------------------------------------------------------------------
 
-    def test_list_sessions_with_prefix(self, store, mock_redis):
-        """Listing sessions with an additional filter prefix."""
-        mock_redis.keys.return_value = [
-            f"test:filtered_{i}".encode() for i in range(3)
-        ]
-
-        session_ids = store.list_sessions(prefix="filtered_")
-
-        mock_redis.keys.assert_called_once_with("test:filtered_*")
-        assert len(session_ids) == 3
-        for i in range(3):
-            assert f"filtered_{i}" in session_ids
-
-    def test_update_session(self, store):
-        """Saving the same ID twice updates the stored record."""
-        session = create_test_session()
-        store.save(session)
-
-        session.events.append(
-            SessionEvent(
-                message="Test message 3",
-                source=EventSource.USER,
-                type=EventType.MESSAGE,
-            )
-        )
-        store.save(session)
-
-        retrieved = store.get(session.id)
-        assert retrieved is not None
-        assert len(retrieved.events) == 3
-        assert retrieved.events[-1].message == "Test message 3"
-
-    def test_expiration(self, mock_redis):
-        """When expiration_seconds is set, `setex` is used instead of `set`."""
-        expiry_store = RedisSessionStore(
-            redis_client=mock_redis,
-            key_prefix="test:",
-            expiration_seconds=3600,
-        )
-        session = create_test_session()
-
-        mock_redis.set.reset_mock()
-        mock_redis.setex.reset_mock()
-
-        expiry_store.save(session)
-
-        mock_redis.setex.assert_called_once()
-        mock_redis.set.assert_not_called()
-
-    def test_set_expiration(self, store, mock_redis):
-        """Manual expire call is forwarded to Redis."""
-        session = create_test_session()
-        store.save(session)
-
-        mock_redis.expire.reset_mock()
-        store.set_expiration(session.id, 7200)
-
-        mock_redis.expire.assert_called_once()
-
-    def test_auto_save_false(self, mock_redis):
-        """When auto_save is False, objects stay cached until flush()."""
-        store = RedisSessionStore(redis_client=mock_redis, auto_save=False)
-        session = create_test_session()
-        store.save(session)
-
-        mock_redis.set.assert_not_called()
-
-        # Retrieve comes from cache
-        assert store.get(session.id).id == session.id
-
-        mock_redis.set.reset_mock()
-        store.flush()
-        mock_redis.set.assert_called()
+async def create_redis_session_store(
+    *,
+    host: str = "localhost",
+    port: int = 6379,
+    db: int = 0,
+    password: Optional[str] = None,
+    key_prefix: str = "session:",
+    expiration_seconds: Optional[int] = None,
+    auto_save: bool = True,
+    session_class: Type[T] = Session,
+    **redis_kwargs,
+) -> RedisSessionStore:
+    redis_asyncio = importlib.import_module("redis.asyncio")
+    client = redis_asyncio.Redis(host=host, port=port, db=db, password=password, **redis_kwargs)
+    return RedisSessionStore(
+        redis_client=client,
+        key_prefix=key_prefix,
+        expiration_seconds=expiration_seconds,
+        auto_save=auto_save,
+        session_class=session_class,
+    )

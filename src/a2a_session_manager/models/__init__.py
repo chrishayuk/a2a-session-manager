@@ -1,3 +1,4 @@
+# a2a_session_manager/models/__init__.py
 """
 Core models for the A2A Session Manager.
 """

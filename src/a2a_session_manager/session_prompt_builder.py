@@ -12,6 +12,7 @@ import json
 import logging
 from typing import List, Dict, Any, Optional, Literal, Union
 from enum import Enum
+import asyncio 
 
 from a2a_session_manager.models.session import Session
 from a2a_session_manager.models.event_type import EventType
@@ -417,99 +418,57 @@ async def _build_hierarchical_prompt(
     
     return prompt
 
-
-def truncate_prompt_to_token_limit(
-    prompt: List[Dict[str, str]],
-    max_tokens: int,
-    model: str = "gpt-3.5-turbo"
-) -> List[Dict[str, str]]:
-    """
-    Truncate a prompt to fit within a token limit.
-    
-    Args:
-        prompt: The prompt to truncate
-        max_tokens: Maximum tokens to include
-        model: Model to use for token counting
-        
-    Returns:
-        Truncated prompt that fits within the token limit
-    """
-    if not prompt:
-        return []
-        
-    # Convert to text for token counting
-    prompt_text = ""
-    for msg in prompt:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if content is None:
-            content = ""
-        prompt_text += f"{role}: {content}\n"
-    
-    # Count tokens
-    token_count = TokenUsage.count_tokens(prompt_text, model)
-    
-    # If we're already under the limit, return as is
-    if token_count <= max_tokens:
-        return prompt
-        
-    # We need to truncate - preserve essential elements
-    
-    # Always keep the first user message (task) and the last few messages
-    result = []
-    
-    # Find the first user message
-    first_user_idx = next((i for i, msg in enumerate(prompt) 
-                          if msg.get("role") == "user"), None)
-    
-    # Find the latest assistant message
-    latest_assistant_idx = next((i for i, msg in enumerate(reversed(prompt))
-                               if msg.get("role") == "assistant"), None)
-    if latest_assistant_idx is not None:
-        latest_assistant_idx = len(prompt) - 1 - latest_assistant_idx
-    
-    # Keep the first user message
-    if first_user_idx is not None:
-        result.append(prompt[first_user_idx])
-    
-    # Keep the latest assistant and subsequent tool calls
-    if latest_assistant_idx is not None:
-        # Add all messages from the assistant onwards
-        result.extend(prompt[latest_assistant_idx:])
-    
-    # Create a list of all tool messages in the original prompt
-    tool_messages = [msg for msg in prompt if msg.get("role") == "tool"]
-    
-    # If we're still over the limit, truncate to essentials but keep at least one tool message
-    if result and TokenUsage.count_tokens(str(result), model) > max_tokens:
-        # Keep only essential non-tool messages
-        truncated = [msg for msg in result if msg.get("role") != "tool"]
-        
-        # If the original prompt had tool messages, keep at least one
-        if tool_messages:
-            truncated.append(tool_messages[0])
-            
-            # Try to add more tool messages if we have space
-            remaining_tools = [msg for msg in result if msg.get("role") == "tool"][1:]
-            for msg in remaining_tools:
-                test_prompt = truncated + [msg]
-                if TokenUsage.count_tokens(str(test_prompt), model) < max_tokens * 0.9:
-                    truncated.append(msg)
-        
-        result = truncated
-    
-    return result
-
-
 async def truncate_prompt_to_token_limit(
     prompt: List[Dict[str, str]],
     max_tokens: int,
-    model: str = "gpt-3.5-turbo"
+    model: str = "gpt-3.5-turbo",
 ) -> List[Dict[str, str]]:
     """
-    Async version of truncate_prompt_to_token_limit.
-    This function is a thin wrapper around the synchronous version
-    since the token counting operation is CPU-bound and not I/O bound.
+    Trim a prompt so its total token count is ≤ `max_tokens`.
+
+    Strategy:
+    • If already within limit → return unchanged
+    • Otherwise keep:
+        – the very first user message
+        – everything from the last assistant message onward
+        – (optionally) one tool message so the model still sees a result
     """
-    # The operation is CPU-bound, so we just return the sync version
-    return truncate_prompt_to_token_limit(prompt, max_tokens, model)
+    if not prompt:
+        return []
+
+    # ------------------------------------------------------------------ #
+    # quick overall count
+    text = "\n".join(f"{m.get('role', 'unknown')}: {m.get('content') or ''}" for m in prompt)
+    total = TokenUsage.count_tokens(text, model)
+    total = await total if asyncio.iscoroutine(total) else total
+    if total <= max_tokens:
+        return prompt
+
+    # ------------------------------------------------------------------ #
+    # decide which messages to keep
+    first_user_idx = next((i for i, m in enumerate(prompt) if m["role"] == "user"), None)
+    last_asst_idx = next(
+        (len(prompt) - 1 - i for i, m in enumerate(reversed(prompt)) if m["role"] == "assistant"),
+        None,
+    )
+
+    kept: List[Dict[str, str]] = []
+    if first_user_idx is not None:
+        kept.append(prompt[first_user_idx])
+    if last_asst_idx is not None:
+        kept.extend(prompt[last_asst_idx:])
+
+    # ------------------------------------------------------------------ #
+    # re-count and maybe drop / add tool messages
+    remaining = TokenUsage.count_tokens(str(kept), model)
+    remaining = await remaining if asyncio.iscoroutine(remaining) else remaining
+
+    if remaining > max_tokens:
+        # remove any tool messages we just added
+        kept = [m for m in kept if m["role"] != "tool"]
+        # but guarantee at least one tool message (the first) if it’ll fit
+        first_tool = next((m for m in prompt if m["role"] == "tool"), None)
+        if first_tool:
+            kept.append(first_tool)
+
+    return kept

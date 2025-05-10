@@ -37,21 +37,28 @@ class TestSessionStoreProvider:
         assert store is custom_store
 
 
-def create_test_session():
-    """Create a test session with events."""
+async def create_test_session():
+    """Create a test session with events asynchronously."""
     session = Session()
-    session.events.append(
-        SessionEvent(
-            message="Test message 1",
-            source=EventSource.USER,
-            type=EventType.MESSAGE
-        )
+    
+    # Create events with async token counting
+    event1 = await SessionEvent.create_with_tokens(
+        message="Test message 1",
+        prompt="Test message 1",
+        source=EventSource.USER,
+        type=EventType.MESSAGE
     )
-    session.events.append(
-        SessionEvent(
-            message="Test message 2",
-            source=EventSource.LLM,
-            type=EventType.MESSAGE
-        )
+    
+    event2 = await SessionEvent.create_with_tokens(
+        message="Test message 2",
+        prompt="",
+        completion="Test message 2",
+        source=EventSource.LLM,
+        type=EventType.MESSAGE
     )
+    
+    # Add events to session
+    await session.add_event(event1)
+    await session.add_event(event2)
+    
     return session

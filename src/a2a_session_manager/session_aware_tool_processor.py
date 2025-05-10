@@ -2,309 +2,269 @@
 """
 Session-aware tool processor that logs tool execution in a session.
 
-This processor handles OpenAI function calling with a hierarchical event structure:
-- Creates a parent "batch" event for each processing run
-- Creates child events for each tool call, linked via metadata.parent_event_id
-- Optionally tracks retries as additional child events
+Hierarchy of events created per LLM message:
+* one parent MESSAGE (“batch”)
+* one TOOL_CALL child per tool invocation (cache hits included)
+* optional SUMMARY children for retry notices
 """
 
 from __future__ import annotations
+
+import asyncio
+import hashlib
 import json
 import logging
-import asyncio
-from typing import List, Dict, Any, Optional, Callable, Union, TypeVar, Generic, Tuple
-from datetime import datetime, timezone
-import hashlib
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
-from a2a_session_manager.models.session_event import SessionEvent
-from a2a_session_manager.models.event_type import EventType
 from a2a_session_manager.models.event_source import EventSource
+from a2a_session_manager.models.event_type import EventType
+from a2a_session_manager.models.session_event import SessionEvent
 from a2a_session_manager.storage import SessionStoreProvider
-from chuk_tool_processor.core.processor import ToolProcessor
 
-# Type for LLM callback function
-LLMCallbackAsync = Callable[[str], Dict[str, Any]]
+# chuk_tool_processor is guaranteed to be available
+from chuk_tool_processor.core.processor import ToolProcessor
 
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------------- #
+# helper types
+# --------------------------------------------------------------------------- #
 
+LLMCallbackAsync = Callable[[str], Any]  # signature not important in this file
+
+
+@dataclass
+class ToolResult:  # noqa: D401
+    tool: str = "tool"
+    call_id: str = "cid"
+    args: Dict[str, Any] | None = None
+    result: Any | None = None
+    error: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# main class
+# --------------------------------------------------------------------------- #
 class SessionAwareToolProcessor:
-    """
-    Tool processor that logs all tool execution in a session.
-    
-    This processor creates a hierarchical event structure in the session:
-    - Parent "batch" event for each processing run
-    - Child tool call events with parent_event_id linking to the batch
-    - Child retry events when retries are enabled
-    """
-    
+    """Logs, caches and retries tool calls inside a session."""
+
     def __init__(
         self,
         session_id: str,
+        *,
         enable_caching: bool = True,
         enable_retries: bool = True,
         max_retries: int = 2,
-        retry_delay: float = 1.0
-    ):
-        """
-        Initialize the session-aware tool processor.
-        
-        Args:
-            session_id: ID of the session to log tool execution in
-            enable_caching: Whether to cache tool results for identical calls
-            enable_retries: Whether to retry failed tool calls
-            max_retries: Maximum number of retries per tool call
-            retry_delay: Delay in seconds between retries
-        """
+        retry_delay: float = 1.0,
+    ) -> None:
         self.session_id = session_id
         self.enable_caching = enable_caching
         self.enable_retries = enable_retries
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.cache: Dict[str, Any] = {}
-    
+
+        # Single ToolProcessor instance – cheap and avoids re-init overhead
+        self._tp = ToolProcessor()
+
+    # ------------------------ factory ----------------------------------- #
     @classmethod
     async def create(
         cls,
         session_id: str,
-        enable_caching: bool = True,
-        enable_retries: bool = True,
-        max_retries: int = 2,
-        retry_delay: float = 1.0
-    ) -> SessionAwareToolProcessor:
-        """
-        Create a new SessionAwareToolProcessor instance asynchronously.
-        
-        Args:
-            session_id: ID of the session to log tool execution in
-            enable_caching: Whether to cache tool results for identical calls
-            enable_retries: Whether to retry failed tool calls
-            max_retries: Maximum number of retries per tool call
-            retry_delay: Delay in seconds between retries
-            
-        Returns:
-            A new SessionAwareToolProcessor instance
-        """
-        # Verify that the session exists
+        **kwargs,
+    ) -> "SessionAwareToolProcessor":
         store = SessionStoreProvider.get_store()
-        session = await store.get(session_id)
-        
-        if not session:
+        if not await store.get(session_id):
             raise ValueError(f"Session {session_id} not found")
-            
-        return cls(
-            session_id=session_id,
-            enable_caching=enable_caching,
-            enable_retries=enable_retries,
-            max_retries=max_retries,
-            retry_delay=retry_delay
-        )
-    
+        return cls(session_id=session_id, **kwargs)
+
+    # ------------------------------------------------------------------- #
+    # internal helper – tests patch this
+    # ------------------------------------------------------------------- #
+    async def _execute_tool_calls(
+        self, calls: List[Dict[str, Any]]
+    ) -> List[ToolResult]:
+        """
+       Delegate to chuk_tool_processor's asynchronous execution.
+
+        Tests monkey-patch this coroutine; in production it just forwards.
+        """
+        raw_results = await self._tp.process_tool_calls(calls, callback=None)
+        # normalise into our dataclass list
+        norm: List[ToolResult] = []
+        for r in raw_results:
+            if isinstance(r, ToolResult):
+                norm.append(r)
+            else:
+                norm.append(ToolResult(result=r))
+        return norm
+
+    # ------------------------------------------------------------------- #
+    # public entry point
+    # ------------------------------------------------------------------- #
     async def process_llm_message(
         self,
         llm_message: Dict[str, Any],
-        llm_callback: LLMCallbackAsync
+        llm_callback: LLMCallbackAsync,  # kept for future expansion
     ) -> List[ToolResult]:
-        """
-        Process an LLM message containing tool calls.
-        
-        Args:
-            llm_message: The message from the LLM with potential tool calls
-            llm_callback: Async callback function for follow-up LLM calls
-            
-        Returns:
-            List of tool results
-        """
-        # Get the store
         store = SessionStoreProvider.get_store()
-        
-        # Get the session
         session = await store.get(self.session_id)
-        if not session:
+        if session is None:
             raise ValueError(f"Session {self.session_id} not found")
-        
-        # Create a parent "batch" event for all tool calls in this message
+
+        # ---- parent batch MESSAGE ----
         batch_event = await SessionEvent.create_with_tokens(
             message=llm_message,
             prompt="",
-            completion=json.dumps(llm_message, default=str),
-            model="gpt-4o-mini",  # Default model, can be overridden
+            completion=json.dumps(llm_message),
+            model="gpt-4o-mini",
             source=EventSource.LLM,
-            type=EventType.MESSAGE
+            type=EventType.MESSAGE,
         )
         await batch_event.update_metadata("contains_tool_calls", True)
         await session.add_event_and_save(batch_event)
-        
-        # Extract tool calls from the message
-        tool_calls = llm_message.get("tool_calls", [])
-        if not tool_calls:
+
+        calls_in_msg: List[Dict[str, Any]] = llm_message.get("tool_calls", [])
+        if not calls_in_msg:
             return []
-        
-        # Process each tool call
-        results = []
-        for call in tool_calls:
-            # Extract tool information
+
+        results: List[ToolResult] = []
+
+        for call in calls_in_msg:
             call_id = call.get("id", "unknown")
-            function = call.get("function", {})
-            tool_name = function.get("name", "unknown")
-            arguments = function.get("arguments", "{}")
-            
-            # Try to parse arguments
+            fn = call.get("function", {})
+            tool_name = fn.get("name", "unknown")
+            args_raw = fn.get("arguments", "{}")
+
             try:
-                args = json.loads(arguments)
+                args = json.loads(args_raw)
             except json.JSONDecodeError:
-                args = {"raw_arguments": arguments}
-            
-            # Check cache if enabled
-            cache_key = None
-            cache_hit = False
+                args = {"raw_arguments": args_raw}
+
+            # -------------- caching ------------------------------------ #
+            cache_key: Optional[str] = None
             if self.enable_caching:
-                cache_key = await self._get_cache_key(tool_name, args)
+                cache_key = await self._make_cache_key(tool_name, args)
                 if cache_key in self.cache:
-                    logger.info(f"Cache hit for tool {tool_name}")
-                    result = self.cache[cache_key]
-                    cache_hit = True
-                    
-                    # Create tool call event for cached result
-                    tool_event = await SessionEvent.create_with_tokens(
-                        message={
-                            "tool": tool_name,
-                            "arguments": args,
-                            "result": result,
-                            "cached": True
-                        },
-                        prompt=f"{tool_name}({json.dumps(args, default=str)})",
-                        completion=json.dumps(result, default=str),
-                        model="tool-execution",
-                        source=EventSource.SYSTEM,
-                        type=EventType.TOOL_CALL
-                    )
-                    await tool_event.update_metadata("parent_event_id", batch_event.id)
-                    await tool_event.update_metadata("call_id", call_id)
-                    await session.add_event_and_save(tool_event)
-                    
-                    # Add to results
-                    tool_result = ToolResult(
+                    cached_val = self.cache[cache_key]
+                    tr = ToolResult(
                         tool=tool_name,
                         call_id=call_id,
                         args=args,
-                        result=result,
-                        error=None
+                        result=cached_val,
                     )
-                    results.append(tool_result)
+                    results.append(tr)
+                    await self._log_tool_event(
+                        session,
+                        parent_id=batch_event.id,
+                        tr=tr,
+                        attempt=1,
+                        cached=True,
+                    )
                     continue
-            
-            # Execute the tool call with retry logic
-            retries = 0
-            max_attempts = self.max_retries + 1 if self.enable_retries else 1
-            
-            while retries < max_attempts:
+
+            # -------------- retries ----------------------------------- #
+            attempts_allowed = self.max_retries + 1 if self.enable_retries else 1
+            attempt = 0
+            while attempt < attempts_allowed:
+                attempt += 1
                 try:
-                    # Call the tool
-                    result = await process_tool_calls(
-                        [{"id": call_id, "type": "function", "function": function}],
-                        callback=None
+                    tr_list = await self._execute_tool_calls(
+                        [{"id": call_id, "type": "function", "function": fn}]
                     )
-                    
-                    if not result:
-                        raise ValueError(f"No result returned for tool {tool_name}")
-                    
-                    tool_result = result[0]
-                    
-                    # Cache the result if enabled
-                    if self.enable_caching and cache_key and not cache_hit:
-                        self.cache[cache_key] = tool_result.result
-                    
-                    # Create tool call event
-                    tool_event = await SessionEvent.create_with_tokens(
-                        message={
-                            "tool": tool_name,
-                            "arguments": args,
-                            "result": tool_result.result,
-                            "error": tool_result.error
-                        },
-                        prompt=f"{tool_name}({json.dumps(args, default=str)})",
-                        completion=json.dumps(tool_result.result, default=str) if tool_result.result else "",
-                        model="tool-execution",
-                        source=EventSource.SYSTEM,
-                        type=EventType.TOOL_CALL
+                    tr = tr_list[0]
+                    tr.tool = tool_name
+                    tr.call_id = call_id
+                    tr.args = args
+
+                    if cache_key:
+                        self.cache[cache_key] = tr.result
+
+                    await self._log_tool_event(
+                        session,
+                        parent_id=batch_event.id,
+                        tr=tr,
+                        attempt=attempt,
+                        cached=False,
                     )
-                    await tool_event.update_metadata("parent_event_id", batch_event.id)
-                    await tool_event.update_metadata("call_id", call_id)
-                    await tool_event.update_metadata("attempt", retries + 1)
-                    await session.add_event_and_save(tool_event)
-                    
-                    # Add to results
-                    results.append(tool_result)
+                    results.append(tr)
                     break
-                
-                except Exception as e:
-                    # Log the error
-                    error_msg = str(e)
-                    logger.warning(f"Tool call failed: {error_msg}")
-                    
-                    # Create retry notice if not the last attempt
-                    retries += 1
-                    if retries < max_attempts:
-                        # Add retry notice
-                        retry_event = SessionEvent(
-                            message=f"Retry {retries}/{self.max_retries} for tool {tool_name}: {error_msg}",
-                            source=EventSource.SYSTEM,
-                            type=EventType.SUMMARY,
-                            metadata={
-                                "parent_event_id": batch_event.id,
-                                "call_id": call_id,
-                                "attempt": retries,
-                                "retry": True
-                            }
+
+                except Exception as exc:
+                    err_msg = str(exc)
+                    logger.warning(f"Tool call failed: {err_msg}")
+
+                    if attempt < attempts_allowed:
+                        # retry notice
+                        await session.add_event_and_save(
+                            SessionEvent(
+                                message=f"Retry {attempt}/{self.max_retries} for tool {tool_name}: {err_msg}",
+                                source=EventSource.SYSTEM,
+                                type=EventType.SUMMARY,
+                                metadata={
+                                    "parent_event_id": batch_event.id,
+                                    "call_id": call_id,
+                                    "attempt": attempt,
+                                    "retry": True,
+                                },
+                            )
                         )
-                        await session.add_event_and_save(retry_event)
-                        
-                        # Wait before retrying
                         await asyncio.sleep(self.retry_delay)
                     else:
-                        # Last attempt failed, add error event
-                        error_event = await SessionEvent.create_with_tokens(
-                            message={
-                                "tool": tool_name,
-                                "arguments": args,
-                                "result": None,
-                                "error": error_msg
-                            },
-                            prompt=f"{tool_name}({json.dumps(args, default=str)})",
-                            completion=error_msg,
-                            model="tool-execution",
-                            source=EventSource.SYSTEM,
-                            type=EventType.TOOL_CALL
-                        )
-                        await error_event.update_metadata("parent_event_id", batch_event.id)
-                        await error_event.update_metadata("call_id", call_id)
-                        await error_event.update_metadata("attempt", retries)
-                        await error_event.update_metadata("failed", True)
-                        await session.add_event_and_save(error_event)
-                        
-                        # Add to results
-                        tool_result = ToolResult(
+                        tr = ToolResult(
                             tool=tool_name,
                             call_id=call_id,
                             args=args,
-                            result=None,
-                            error=error_msg
+                            error=err_msg,
                         )
-                        results.append(tool_result)
-        
+                        await self._log_tool_event(
+                            session,
+                            parent_id=batch_event.id,
+                            tr=tr,
+                            attempt=attempt,
+                            cached=False,
+                            failed=True,
+                        )
+                        results.append(tr)
+
         return results
-    
-    async def _get_cache_key(self, tool_name: str, args: Dict[str, Any]) -> str:
-        """
-        Generate a cache key for a tool call asynchronously.
-        
-        Args:
-            tool_name: Name of the tool
-            args: Arguments to the tool
-            
-        Returns:
-            A cache key string
-        """
-        key_data = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-        return hashlib.md5(key_data.encode()).hexdigest()
+
+    # ------------------------------------------------------------------- #
+    # helpers
+    # ------------------------------------------------------------------- #
+    async def _make_cache_key(self, tool: str, args: Dict[str, Any]) -> str:
+        blob = f"{tool}:{json.dumps(args, sort_keys=True)}"
+        return hashlib.md5(blob.encode()).hexdigest()
+
+    async def _log_tool_event(
+        self,
+        session,
+        *,
+        parent_id: str,
+        tr: ToolResult,
+        attempt: int,
+        cached: bool,
+        failed: bool = False,
+    ) -> None:
+        ev = await SessionEvent.create_with_tokens(
+            message={
+                "tool": tr.tool,
+                "arguments": tr.args,
+                "result": tr.result,
+                "error": tr.error,
+                "cached": cached,
+            },
+            prompt=f"{tr.tool}({json.dumps(tr.args, default=str)})",
+            completion=json.dumps(tr.result, default=str) if tr.result is not None else "",
+            model="tool-execution",
+            source=EventSource.SYSTEM,
+            type=EventType.TOOL_CALL,
+        )
+        await ev.update_metadata("parent_event_id", parent_id)
+        await ev.update_metadata("call_id", tr.call_id)
+        await ev.update_metadata("attempt", attempt)
+        if failed:
+            await ev.update_metadata("failed", True)
+        await session.add_event_and_save(ev)

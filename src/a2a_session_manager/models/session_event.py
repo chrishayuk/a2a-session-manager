@@ -1,6 +1,6 @@
 # a2a_session_manager/models/session_event.py
 """
-Session event model for the A2A Session Manager with async support.
+Session event model for the A2A Session Manager with improved async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -59,9 +59,8 @@ class SessionEvent(BaseModel, Generic[MessageT]):
         Returns:
             A new SessionEvent with token usage information
         """
-        # Important: Calculate tokens synchronously since we don't have async overload yet
-        # This is a temporary solution until TokenUsage.from_text is properly set up for overloading
-        token_usage = TokenUsage.from_text(prompt, completion, model)
+        # Use the async method of TokenUsage
+        token_usage = await TokenUsage.from_text(prompt, completion, model)
         
         # Create the event
         event = cls(
@@ -99,20 +98,20 @@ class SessionEvent(BaseModel, Generic[MessageT]):
             
         # Calculate tokens if text is provided
         if prompt:
-            # Use synchronous method for now
-            prompt_tokens = TokenUsage.count_tokens(prompt, self.token_usage.model)
+            # Use async method for token counting
+            prompt_tokens = await TokenUsage.count_tokens(prompt, self.token_usage.model)
             self.token_usage.prompt_tokens = prompt_tokens
             
         if completion:
-            # Use synchronous method for now
-            completion_tokens = TokenUsage.count_tokens(completion, self.token_usage.model)
+            # Use async method for token counting
+            completion_tokens = await TokenUsage.count_tokens(completion, self.token_usage.model)
             self.token_usage.completion_tokens = completion_tokens
             
         # Recalculate totals
         self.token_usage.total_tokens = self.token_usage.prompt_tokens + self.token_usage.completion_tokens
         if self.token_usage.model:
-            # Use synchronous method for now
-            self.token_usage.estimated_cost_usd = self.token_usage.calculate_cost()
+            # Use async method for cost calculation
+            self.token_usage.estimated_cost_usd = await self.token_usage.calculate_cost()
             
     # Metadata async methods with clean names
     async def get_metadata(self, key: str, default: Any = None) -> Any:
@@ -155,3 +154,13 @@ class SessionEvent(BaseModel, Generic[MessageT]):
         """
         if key in self.metadata:
             del self.metadata[key]
+    
+    # Alternative async method for updating metadata for backward compatibility
+    async def update_metadata(self, key: str, value: Any) -> None:
+        """Update a metadata value (alias for set_metadata).
+        
+        Args:
+            key: The metadata key to set
+            value: The value to set
+        """
+        await self.set_metadata(key, value)

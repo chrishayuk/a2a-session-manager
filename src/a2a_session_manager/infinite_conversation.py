@@ -267,26 +267,22 @@ class InfiniteConversationManager:
     
     async def get_session_chain(self, session_id: str) -> List[Session]:
         """
-        Get the chain of sessions from the root to the current session.
-        
-        Args:
-            session_id: ID of the current session
-            
-        Returns:
-            A list of sessions from root to current
+        Return sessions from root → … → current.
+
+        The `Session.ancestors()` helper usually returns the chain in
+        *reverse* (closest parent first).  Tests expect root-first order,
+        so we reverse it and then append the current session.
         """
-        # Get the store
         store = SessionStoreProvider.get_store()
-        
-        # Get the current session
         session = await store.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-        
-        # Get ancestors and add the current session
+
         ancestors = await session.ancestors()
+        # ensure order root → … → parent
+        ancestors = list(reversed(ancestors))
         return ancestors + [session]
-    
+
     async def get_full_conversation_history(
         self,
         session_id: str

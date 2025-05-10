@@ -1,12 +1,13 @@
 # a2a_session_manager/models/session.py
 """
-Session model for the A2A Session Manager with async support.
+Session model for the A2A Session Manager with improved async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Generic, TypeVar, Union
 from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
+import asyncio
 
 # Import models that Session depends on
 from a2a_session_manager.models.session_metadata import SessionMetadata
@@ -30,7 +31,7 @@ class Session(BaseModel, Generic[MessageT]):
     events: List[SessionEvent[MessageT]] = Field(default_factory=list)
     state: Dict[str, Any] = Field(default_factory=dict)
     
-    # Token tracking - new field
+    # Token tracking
     token_summary: TokenSummary = Field(default_factory=TokenSummary)
 
     @model_validator(mode="after")
@@ -137,9 +138,9 @@ class Session(BaseModel, Generic[MessageT]):
                 stack.extend(child.child_ids)
         return result
     
-    def add_event(self, event: SessionEvent[MessageT]) -> None:
+    async def add_event(self, event: SessionEvent[MessageT]) -> None:
         """
-        Add an event to the session and update token tracking.
+        Add an event to the session and update token tracking asynchronously.
         
         Args:
             event: The event to add
@@ -149,7 +150,7 @@ class Session(BaseModel, Generic[MessageT]):
         
         # Update token summary if this event has token usage
         if event.token_usage:
-            self.token_summary.add_usage(event.token_usage)
+            await self.token_summary.add_usage(event.token_usage)
     
     async def add_event_and_save(self, event: SessionEvent[MessageT]) -> None:
         """
@@ -158,17 +159,17 @@ class Session(BaseModel, Generic[MessageT]):
         Args:
             event: The event to add
         """
-        # Add the event
-        self.add_event(event)
+        # Add the event asynchronously
+        await self.add_event(event)
         
         # Save the session
         from a2a_session_manager.storage import SessionStoreProvider
         store = SessionStoreProvider.get_store()
         await store.save(self)
     
-    def get_token_usage_by_source(self) -> Dict[str, TokenSummary]:
+    async def get_token_usage_by_source(self) -> Dict[str, TokenSummary]:
         """
-        Get token usage statistics grouped by event source.
+        Get token usage statistics grouped by event source asynchronously.
         
         Returns:
             A dictionary mapping event sources to token summaries
@@ -183,13 +184,13 @@ class Session(BaseModel, Generic[MessageT]):
             if source not in result:
                 result[source] = TokenSummary()
                 
-            result[source].add_usage(event.token_usage)
+            await result[source].add_usage(event.token_usage)
             
         return result
     
-    def get_token_usage_by_run(self) -> Dict[str, TokenSummary]:
+    async def get_token_usage_by_run(self) -> Dict[str, TokenSummary]:
         """
-        Get token usage statistics grouped by run.
+        Get token usage statistics grouped by run asynchronously.
         
         Returns:
             A dictionary mapping run IDs to token summaries
@@ -207,17 +208,17 @@ class Session(BaseModel, Generic[MessageT]):
             if run_id not in result:
                 result[run_id] = TokenSummary()
                 
-            result[run_id].add_usage(event.token_usage)
+            await result[run_id].add_usage(event.token_usage)
             
         return result
     
-    def count_message_tokens(
+    async def count_message_tokens(
         self, 
         message: Union[str, Dict[str, Any]], 
         model: str = "gpt-3.5-turbo"
     ) -> int:
         """
-        Count tokens in a message.
+        Count tokens in a message asynchronously.
         
         Args:
             message: The message to count tokens for (string or dict)
@@ -228,14 +229,69 @@ class Session(BaseModel, Generic[MessageT]):
         """
         # If message is already a string, count directly
         if isinstance(message, str):
-            return TokenUsage.count_tokens(message, model)
+            return await TokenUsage.count_tokens(message, model)
         
         # If it's a dict (like OpenAI messages), extract content
         if isinstance(message, dict) and "content" in message:
-            return TokenUsage.count_tokens(message["content"], model)
+            return await TokenUsage.count_tokens(message["content"], model)
             
         # If it's some other object, convert to string and count
-        return TokenUsage.count_tokens(str(message), model)
+        return await TokenUsage.count_tokens(str(message), model)
+    
+    async def set_state(self, key: str, value: Any) -> None:
+        """
+        Set a state value asynchronously.
+        
+        Args:
+            key: The state key to set
+            value: The value to set
+        """
+        self.state[key] = value
+        
+        # Auto-save if needed (could be added as an option)
+        # from a2a_session_manager.storage import SessionStoreProvider
+        # store = SessionStoreProvider.get_store()
+        # await store.save(self)
+    
+    async def get_state(self, key: str, default: Any = None) -> Any:
+        """
+        Get a state value asynchronously.
+        
+        Args:
+            key: The state key to retrieve
+            default: Default value to return if key not found
+            
+        Returns:
+            The state value or default if not found
+        """
+        return self.state.get(key, default)
+    
+    async def has_state(self, key: str) -> bool:
+        """
+        Check if a state key exists asynchronously.
+        
+        Args:
+            key: The state key to check
+            
+        Returns:
+            True if the key exists in state
+        """
+        return key in self.state
+    
+    async def remove_state(self, key: str) -> None:
+        """
+        Remove a state key-value pair asynchronously.
+        
+        Args:
+            key: The state key to remove
+        """
+        if key in self.state:
+            del self.state[key]
+            
+            # Auto-save if needed (could be added as an option)
+            # from a2a_session_manager.storage import SessionStoreProvider
+            # store = SessionStoreProvider.get_store()
+            # await store.save(self)
 
     @classmethod
     async def create(cls, parent_id: Optional[str] = None, **kwargs) -> Session:

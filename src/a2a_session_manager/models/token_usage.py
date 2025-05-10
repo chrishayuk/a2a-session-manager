@@ -2,14 +2,15 @@
 """
 Token usage tracking models for the A2A Session Manager.
 
-This module provides models for tracking token usage in LLM interactions.
-It optionally uses tiktoken for accurate token counting if available.
+This module provides models for tracking token usage in LLM interactions
+with proper async support.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Dict, Optional, Union, List, Any, overload
+from typing import Dict, Optional, Union, List, Any
 from uuid import uuid4
 from pydantic import BaseModel, Field, ConfigDict
+import asyncio
 
 # Try to import tiktoken, but make it optional
 try:
@@ -46,17 +47,16 @@ class TokenUsage(BaseModel):
             
         # Auto-calculate estimated cost if model is provided
         if self.model and self.estimated_cost_usd is None:
-            self.estimated_cost_usd = self.calculate_cost()
+            self.estimated_cost_usd = self._calculate_cost_sync()
     
-    def calculate_cost(self) -> float:
+    def _calculate_cost_sync(self) -> float:
         """
-        Calculate the estimated cost based on the model and token counts.
+        Synchronous implementation of calculate_cost.
         
         Returns:
             Estimated cost in USD
         """
         # Model pricing per 1000 tokens (approximate as of May 2025)
-        # This should be updated as pricing changes
         pricing = {
             # OpenAI models
             "gpt-4": {"input": 0.03, "output": 0.06},
@@ -81,7 +81,6 @@ class TokenUsage(BaseModel):
         
         return round(input_cost + output_cost, 6)
     
-    # Async version as a separate method
     async def calculate_cost(self) -> float:
         """
         Async version of calculate_cost.
@@ -89,11 +88,13 @@ class TokenUsage(BaseModel):
         Returns:
             Estimated cost in USD
         """
-        return self.calculate_cost()
+        # Token calculation is CPU-bound, so run in executor
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._calculate_cost_sync)
     
-    def update(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+    def _update_sync(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         """
-        Update token counts and recalculate totals and costs.
+        Synchronous implementation of update.
         
         Args:
             prompt_tokens: Additional prompt tokens to add
@@ -104,9 +105,8 @@ class TokenUsage(BaseModel):
         self.total_tokens = self.prompt_tokens + self.completion_tokens
         
         if self.model:
-            self.estimated_cost_usd = self.calculate_cost()
+            self.estimated_cost_usd = self._calculate_cost_sync()
     
-    # Async version as a separate method
     async def update(self, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         """
         Async version of update.
@@ -123,14 +123,14 @@ class TokenUsage(BaseModel):
             self.estimated_cost_usd = await self.calculate_cost()
     
     @classmethod
-    def from_text(
+    def _from_text_sync(
         cls, 
         prompt: str, 
         completion: Optional[str] = None, 
         model: str = "gpt-3.5-turbo"
     ) -> TokenUsage:
         """
-        Create a TokenUsage instance by counting tokens in the provided text.
+        Synchronous implementation of from_text.
         
         Args:
             prompt: The prompt/input text
@@ -139,12 +139,9 @@ class TokenUsage(BaseModel):
             
         Returns:
             A TokenUsage instance with token counts
-            
-        Note:
-            If tiktoken is not available, a simple approximation is used.
         """
-        prompt_tokens = cls.count_tokens(prompt, model)
-        completion_tokens = cls.count_tokens(completion, model) if completion else 0
+        prompt_tokens = cls._count_tokens_sync(prompt, model)
+        completion_tokens = cls._count_tokens_sync(completion, model) if completion else 0
         
         return cls(
             prompt_tokens=prompt_tokens,
@@ -152,7 +149,6 @@ class TokenUsage(BaseModel):
             model=model
         )
     
-    # Async version as a separate method 
     @classmethod
     async def from_text(
         cls, 
@@ -171,13 +167,17 @@ class TokenUsage(BaseModel):
         Returns:
             A TokenUsage instance with token counts
         """
-        # Token counting is CPU-bound, not I/O bound
-        return cls.from_text(prompt, completion, model)
+        # Run token counting in executor since it's CPU-bound
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, 
+            lambda: cls._from_text_sync(prompt, completion, model)
+        )
     
     @staticmethod
-    def count_tokens(text: Optional[str], model: str = "gpt-3.5-turbo") -> int:
+    def _count_tokens_sync(text: Optional[str], model: str = "gpt-3.5-turbo") -> int:
         """
-        Count the number of tokens in the provided text.
+        Synchronous implementation of count_tokens.
         
         Args:
             text: The text to count tokens for
@@ -185,9 +185,6 @@ class TokenUsage(BaseModel):
             
         Returns:
             The number of tokens
-            
-        Note:
-            If tiktoken is not available, a simple approximation is used.
         """
         if text is None:
             return 0
@@ -206,10 +203,8 @@ class TokenUsage(BaseModel):
                     pass
         
         # Simple approximation: ~4 chars per token for English text
-        # This is a very rough estimate and shouldn't be relied upon for billing
         return int(len(text) / 4)
     
-    # Async version as a separate method
     @staticmethod
     async def count_tokens(text: Optional[str], model: str = "gpt-3.5-turbo") -> int:
         """
@@ -222,8 +217,12 @@ class TokenUsage(BaseModel):
         Returns:
             The number of tokens
         """
-        # Token counting is CPU-bound, not I/O bound
-        return TokenUsage.count_tokens(text, model)
+        # Run in executor since token counting is CPU-bound
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: TokenUsage._count_tokens_sync(text, model)
+        )
     
     def __add__(self, other: TokenUsage) -> TokenUsage:
         """
@@ -262,9 +261,9 @@ class TokenSummary(BaseModel):
     usage_by_model: Dict[str, TokenUsage] = Field(default_factory=dict)
     total_estimated_cost_usd: float = 0.0
     
-    def add_usage(self, usage: TokenUsage) -> None:
+    def _add_usage_sync(self, usage: TokenUsage) -> None:
         """
-        Add a TokenUsage instance to this summary.
+        Synchronous implementation of add_usage.
         
         Args:
             usage: The TokenUsage to add
@@ -278,7 +277,7 @@ class TokenSummary(BaseModel):
         
         if usage.model:
             if usage.model in self.usage_by_model:
-                self.usage_by_model[usage.model].update(
+                self.usage_by_model[usage.model]._update_sync(
                     prompt_tokens=usage.prompt_tokens,
                     completion_tokens=usage.completion_tokens
                 )
@@ -288,8 +287,7 @@ class TokenSummary(BaseModel):
                     completion_tokens=usage.completion_tokens,
                     model=usage.model
                 )
-                
-    # Async version as a separate method
+    
     async def add_usage(self, usage: TokenUsage) -> None:
         """
         Async version of add_usage.
