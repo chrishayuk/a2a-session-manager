@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # examples/session_example.py
-#!/usr/bin/env python3
-# examples/session_example.py
 """
 Async Session-manager demo
 

@@ -1,4 +1,4 @@
-# src/chuk_session_manager/storage/providers/redis.py
+# chuk_session_manager/storage/providers/redis.py
 """
 Async Redis-based session storage implementation.
 """

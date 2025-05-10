@@ -1,3 +1,4 @@
+# chuk_session_manager/__init__.py
 """
 chuk session manager package.
 

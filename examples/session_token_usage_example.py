@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# examples/session_token_usage_example.py
+#!/usr/bin/env python3
 """
 Async token-usage demo for chuk session manager.
 
