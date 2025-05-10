@@ -60,7 +60,7 @@ async def main():
 
     # Add an event
     session.add_event(SessionEvent(
-        message="Hello, this is a user message",
+        message="Hello, this is a user message.",
         source=EventSource.USER
     ))
 
