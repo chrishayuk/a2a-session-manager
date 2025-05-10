@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# sample_tools/calculator_tool.py
 """
 sample_tools/calculator_tool.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
